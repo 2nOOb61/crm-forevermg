@@ -266,7 +266,7 @@
         <div class="login-subtitle">Connexion à l'application</div>
       </div>
       <div id="loginBlock">
-        <form onsubmit="event.preventDefault(); submitLogin();">
+        <form id="loginForm">
           <div class="space-y-3">
             <div>
               <label class="text-sm">Nom d'utilisateur</label>
@@ -285,7 +285,7 @@
       </div>
       <div id="setupBlock" style="display:none;">
         <div class="text-sm mb-4" style="color: var(--text-muted);">Aucun utilisateur. Créez le compte admin.</div>
-        <form onsubmit="event.preventDefault(); submitSetup();">
+        <form id="setupForm">
           <div class="space-y-3">
             <div>
               <label class="text-sm">Nom d'utilisateur</label>
@@ -698,6 +698,14 @@
 
 
 <script>
+// Attacher les handlers de login après chargement DOM
+document.addEventListener('DOMContentLoaded', function() {
+  var lf = document.getElementById('loginForm');
+  if (lf) lf.addEventListener('submit', function(e){ e.preventDefault(); if(typeof submitLogin==='function') submitLogin(); });
+  var sf = document.getElementById('setupForm');
+  if (sf) sf.addEventListener('submit', function(e){ e.preventDefault(); if(typeof submitSetup==='function') submitSetup(); });
+});
+
 // Config GAS — même URL que le CRM
 window.GAS_URL = localStorage.getItem('facturepro_gas_url') || '';
 if (!window.GAS_URL) {
