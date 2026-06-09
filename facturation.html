@@ -1,0 +1,1281 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>FOREVER MG — Facturation</title>
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  
+  <style>
+    :root {
+      --primary: #0f172a;
+      --accent: #e8834a;
+      --accent-light: #fed7aa;
+      --surface: #ffffff;
+      --surface-alt: #f8fafc;
+      --text: #1e293b;
+      --text-muted: #64748b;
+      --border: #e2e8f0;
+      --success: #10b981;
+      --warning: #f59e0b;
+      --danger: #ef4444;
+      --collapsed-w: 250px;
+      --sidebar-bg: var(--surface);
+    }
+    .dark {
+      --primary: #f8fafc;
+      --accent: #f0a070;
+      --accent-light: #431407;
+      --surface: #0f172a;
+      --surface-alt: #1e293b;
+      --text: #f1f5f9;
+      --text-muted: #94a3b8;
+      --border: #334155;
+      --sidebar-bg: var(--surface);
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: 'DM Sans', sans-serif;
+      background: var(--surface-alt);
+      color: var(--text);
+      margin: 0;
+      min-height: 100vh;
+    }
+    .logo-text { font-family: 'Space Mono', monospace; }
+    .nav-btn {
+      padding: .75rem 1rem;
+      border-radius: .5rem;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+      font-weight: 500;
+      color: var(--text-muted);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      width: 100%;
+      text-align: left;
+    }
+    .nav-btn:hover, .nav-btn.active {
+      background: var(--accent);
+      color: white;
+    }
+    .card {
+      background: var(--surface);
+      border-radius: 1rem;
+      border: 1px solid var(--border);
+      padding: 1.5rem;
+    }
+    .btn {
+      padding: .625rem 1.25rem;
+      border-radius: .5rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      border: none;
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      font-size: .875rem;
+    }
+    .btn:disabled { opacity: .55; cursor: not-allowed; }
+    .btn-primary { background: var(--accent); color: white; }
+    .btn-primary:hover { background: #d06030; }
+    .btn-secondary { background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-success { background: var(--success); color: white; }
+    .btn-danger { background: var(--danger); color: white; }
+    .input {
+      width: 100%;
+      padding: .75rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: .5rem;
+      background: var(--surface);
+      color: var(--text);
+      font-size: 1rem;
+      transition: border-color .2s;
+    }
+    .input:focus { outline: none; border-color: var(--accent); }
+    .table-container { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td {
+      padding: .875rem 1rem;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    th {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: .75rem;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    tr:hover { background: var(--surface-alt); }
+    .badge {
+      padding: .25rem .75rem;
+      border-radius: 9999px;
+      font-size: .75rem;
+      font-weight: 600;
+      display: inline-block;
+    }
+    .badge-draft { background: #f1f5f9; color: #475569; }
+    .badge-sent { background: #e0e7ff; color: #3730a3; }
+    .badge-converted { background: #d1fae5; color: #065f46; }
+    .badge-pending { background: #fef3c7; color: #92400e; }
+    .badge-paid { background: #d1fae5; color: #065f46; }
+    .badge-partial { background: #dbeafe; color: #1e40af; }
+    .badge-overdue { background: #fee2e2; color: #991b1b; }
+    .stat-card {
+      background: var(--surface);
+      border-radius: 1rem;
+      padding: 1.5rem;
+      border: 1px solid var(--border);
+    }
+    .stat-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 50;
+      padding: 1rem;
+      backdrop-filter: blur(4px);
+    }
+    .modal {
+      background: var(--surface);
+      border-radius: 1rem;
+      max-width: 980px;
+      width: 100%;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 2rem;
+    }
+    .sidebar {
+      margin-top: 80px;
+      position: fixed;
+      left: 0;
+      top: 0;
+      height: calc(100vh - 80px);
+      width: var(--collapsed-w);
+      background: var(--sidebar-bg);
+      border-right: 1px solid rgba(255, 255, 255, 0.1);
+      transition: width 0.45s cubic-bezier(0.4, 0, 0.2, 1), transform .3s;
+      overflow-x: hidden;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      padding-top: 20px;
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+      z-index: 40;
+    }
+    .main-content {
+      margin-left: var(--collapsed-w);
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    @media (max-width: 768px) {
+      .sidebar { transform: translateX(-100%); width: 280px; }
+      .sidebar.open { transform: translateX(0); }
+      .main-content { margin-left: 0; }
+      .mobile-header { display: flex; position: sticky; top: 0; z-index: 30; background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem; }
+    }
+    @media (min-width: 769px) {
+      .mobile-header { display: none; }
+      .sidebar-overlay { display: none !important; }
+    }
+    .page.hidden { display: none; }
+    .item-row {
+      display: grid;
+      grid-template-columns: 3fr 1fr 1fr 1fr auto;
+      gap: .75rem;
+      align-items: center;
+      padding: .75rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (max-width: 640px) {
+      .item-row { grid-template-columns: 1fr; gap: .5rem; }
+    }
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      color: white;
+    }
+    .spinner {
+      width: 50px;
+      height: 50px;
+      border: 4px solid rgba(255,255,255,.3);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+    .login-screen {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: radial-gradient(circle at 20% 20%, #fff7ed 0%, #f8fafc 55%, #e2e8f0 100%);
+      z-index: 200;
+      padding: 2rem;
+    }
+    .login-card {
+      width: min(460px, 92vw);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      padding: 2rem;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.12);
+    }
+    .login-title { font-size: 1.5rem; font-weight: 700; }
+    .login-subtitle { color: var(--text-muted); margin-top: .25rem; }
+    .login-error { color: var(--danger); display: none; }
+  </style>
+</head>
+<body>
+<div id="crm-topbar" style="position:fixed;top:0;left:0;right:0;height:48px;background:#1a4a3a;color:#fff;display:flex;align-items:center;padding:0 16px;gap:12px;z-index:1000;">
+  <button onclick="window.location.href='index.html'" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;">← CRM</button>
+  <span style="font-weight:700;font-size:16px;letter-spacing:-.2px;">4EVER<span style="color:#e8834a">MG</span> — Facturation</span>
+  <span id="fact-gas-status" style="margin-left:auto;font-size:11px;opacity:.7;">GAS: non connecté</span>
+</div>
+<div style="height:48px"></div>
+
+  <div id="login" class="login-screen">
+    <div class="login-card">
+      <div class="mb-6">
+        <div class="logo-text text-2xl" style="color: var(--accent);">4EVER MG</div>
+        <div class="login-subtitle">Connexion à l'application</div>
+      </div>
+      <div id="loginBlock">
+        <form onsubmit="event.preventDefault(); submitLogin();">
+          <div class="space-y-3">
+            <div>
+              <label class="text-sm">Nom d'utilisateur</label>
+              <input id="login_username" class="input" autocomplete="username">
+            </div>
+            <div>
+              <label class="text-sm">Mot de passe</label>
+              <input id="login_password" type="password" class="input" autocomplete="current-password">
+            </div>
+            <div id="login_error" class="text-sm login-error"></div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-primary" type="submit">Se connecter</button>
+          </div>
+        </form>
+      </div>
+      <div id="setupBlock" style="display:none;">
+        <div class="text-sm mb-4" style="color: var(--text-muted);">Aucun utilisateur. Créez le compte admin.</div>
+        <form onsubmit="event.preventDefault(); submitSetup();">
+          <div class="space-y-3">
+            <div>
+              <label class="text-sm">Nom d'utilisateur</label>
+              <input id="setup_username" class="input" autocomplete="username">
+            </div>
+            <div>
+              <label class="text-sm">Nom affiché</label>
+              <input id="setup_display" class="input">
+            </div>
+            <div>
+              <label class="text-sm">Mot de passe</label>
+              <input id="setup_password" type="password" class="input" autocomplete="new-password">
+            </div>
+            <div>
+              <label class="text-sm">Confirmer le mot de passe</label>
+              <input id="setup_confirm" type="password" class="input" autocomplete="new-password">
+            </div>
+            <div id="setup_error" class="text-sm login-error"></div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-primary" type="submit">Créer admin</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div id="app" style="display:none;">
+    <!-- Mobile Header -->
+    <div class="mobile-header">
+      <button onclick="toggleSidebar()" class="btn btn-secondary"><i class="fas fa-bars"></i></button>
+      <span class="logo-text text-xl ml-4" style="color: var(--accent);">FacturePro</span>
+    </div>
+
+    <!-- Sidebar Overlay -->
+    <div id="sidebarOverlay" class="sidebar-overlay" onclick="toggleSidebar()" style="display:none; position:fixed; inset:0; background: rgba(0,0,0,.5); z-index:35;"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar" class="sidebar">
+      <div class="mb-8">
+        <h1 class="logo-text text-2xl" style="color: var(--accent);">4EVER MG</h1>
+        <p class="text-sm mt-1" style="color: var(--text-muted);">Gestion Commerciale</p>
+      </div>
+      <nav class="space-y-2">
+        <button class="nav-btn active" data-page="dashboard" onclick="showPage('dashboard')">
+          <i class="fas fa-chart-line"></i> Tableau de bord
+        </button>
+        <button class="nav-btn" data-page="clients" onclick="showPage('clients')">
+          <i class="fas fa-users"></i> Clients
+        </button>
+        <button class="nav-btn" data-page="quotes" onclick="showPage('quotes')">
+          <i class="fas fa-file-alt"></i> Devis
+        </button>
+        <button class="nav-btn" data-page="invoices" onclick="showPage('invoices')">
+          <i class="fas fa-file-invoice-dollar"></i> Factures
+        </button>
+        <button class="nav-btn" data-page="deliveries" onclick="showPage('deliveries')">
+          <i class="fas fa-truck"></i> Bons de livraison
+        </button>
+        <button class="nav-btn" data-page="pos-system" onclick="showPage('pos-system')">
+          <i class="fas fa-cash-register"></i> <span>Vente Rapide</span>
+        </button>
+      </nav>
+      <div class="mt-auto pt-8 border-t" style="border-color: var(--border);">
+        <div class="space-y-2">
+          <button class="nav-btn" onclick="openSheetsModal()">
+            <i class="fab fa-google-drive"></i> Google Sheets (Team Sync)
+          </button>
+          <button class="nav-btn" onclick="openPrintLayoutModal()">
+            <i class="fas fa-print"></i> Modèle impression
+          </button>
+          <button class="nav-btn" onclick="openInterface()">
+            <i class="fas fa-layer-group"></i> Mon Interface
+          </button>
+          <button class="nav-btn" onclick="openCompanyInfoModal()">
+            <i class="fas fa-building"></i> Infos entreprise
+          </button>
+          <button class="nav-btn" onclick="openUsersModal()" data-role="admin">
+            <i class="fas fa-user-shield"></i> Utilisateurs
+          </button>
+          <button class="nav-btn" onclick="exportAllDataJson()">
+            <i class="fas fa-download"></i> Export JSON (backup)
+          </button>
+          <button class="nav-btn" onclick="exportAllDataCsv()">
+            <i class="fas fa-file-excel"></i> Export Excel (CSV)
+          </button>
+          <button class="nav-btn" onclick="importAllDataJsonPrompt()">
+            <i class="fas fa-upload"></i> Import JSON (backup)
+          </button>
+          <button class="nav-btn" onclick="importAllDataCsvPrompt()">
+            <i class="fas fa-file-import"></i> Import Excel (CSV)
+          </button>
+          <button class="nav-btn" onclick="logout()">
+            <i class="fas fa-sign-out-alt"></i> Déconnexion
+          </button>
+        </div>
+        <div class="mt-4 text-xs" style="color: var(--text-muted);">
+          <div><span class="mono">Device:</span> <span id="deviceIdLabel">—</span></div>
+          <div><span class="mono">Rev:</span> <span id="revLabel">0</span></div>
+          <div><span class="mono">User:</span> <span id="userLabel">—</span></div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Dashboard -->
+      <div id="page-dashboard" class="page">
+        <h2 class="text-2xl font-bold mb-6">Tableau de bord</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: var(--accent-light);">
+                <i class="fas fa-users" style="color: var(--accent);"></i>
+              </div>
+              <span style="color: var(--text-muted);">Clients</span>
+            </div>
+            <div class="stat-value" id="stat-clients">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: #dbeafe;">
+                <i class="fas fa-file-alt" style="color: #2563eb;"></i>
+              </div>
+              <span style="color: var(--text-muted);">Devis en cours</span>
+            </div>
+            <div class="stat-value" id="stat-quotes" style="color: #2563eb;">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: #fef3c7;">
+                <i class="fas fa-clock" style="color: #d97706;"></i>
+              </div>
+              <span style="color: var(--text-muted);">Impayées</span>
+            </div>
+            <div class="stat-value" id="stat-unpaid" style="color: #d97706;">0 Ar</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background: #d1fae5;">
+                <i class="fas fa-check-circle" style="color: #059669;"></i>
+              </div>
+              <span style="color: var(--text-muted);">Payées ce mois</span>
+            </div>
+            <div class="stat-value" id="stat-paid" style="color: #059669;">0 Ar</div>
+          </div>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="card">
+            <h3 class="font-bold mb-4">Derniers devis</h3>
+            <div id="recent-quotes" class="space-y-3">
+              <p style="color: var(--text-muted);">Aucun devis</p>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="font-bold mb-4">Factures en attente</h3>
+            <div id="pending-invoices" class="space-y-3">
+              <p style="color: var(--text-muted);">Aucune facture en attente</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Clients -->
+      <div id="page-clients" class="page hidden">
+        <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Clients</h2>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn btn-secondary" onclick="importContactsCsvPrompt()"><i class="fas fa-file-import"></i> Import CSV</button>
+            <button class="btn btn-secondary" onclick="mergeDuplicateClients()"><i class="fas fa-code-branch"></i> Fusionner doublons</button>
+            <button class="btn btn-danger" id="deleteSelectedClientsBtn" onclick="deleteSelectedClients()" disabled><i class="fas fa-trash"></i> Supprimer sélection</button>
+            <button class="btn btn-primary" onclick="openClientModal()"><i class="fas fa-plus"></i> Nouveau client</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="mb-4">
+            <input type="text" class="input" placeholder="Rechercher un client..." id="clientSearch" oninput="filterClients()">
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th style="width:36px;"><input type="checkbox" id="clients_select_all" onchange="toggleSelectAllClients(this.checked)"></th>
+                  <th>Nom / Société</th>
+                  <th>Contact</th>
+                  <th>Adresse</th>
+                  <th>Téléphone</th>
+                  <th>NIF</th>
+                  <th>STAT</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="clients-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Devis -->
+      <div id="page-quotes" class="page hidden">
+        <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Devis</h2>
+          <button class="btn btn-primary" onclick="openQuoteModal()"><i class="fas fa-plus"></i> Nouveau devis</button>
+        </div>
+        <div class="card">
+          <div class="mb-4 flex flex-wrap gap-4">
+            <input type="text" class="input" style="max-width: 300px;" placeholder="Rechercher..." id="quoteSearch" oninput="filterQuotes()">
+            <select class="input" style="max-width: 200px;" id="quoteStatusFilter" onchange="filterQuotes()">
+              <option value="">Tous les statuts</option>
+              <option value="draft">Brouillon</option>
+              <option value="sent">Envoyé</option>
+              <option value="converted">Converti</option>
+            </select>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>N° Devis</th>
+                  <th>Client</th>
+                  <th>Date</th>
+                  <th>Montant TTC</th>
+                  <th>Statut</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="quotes-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Factures -->
+      <div id="page-invoices" class="page hidden">
+        <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Factures</h2>
+          <button class="btn btn-primary" onclick="openInvoiceModal()"><i class="fas fa-plus"></i> Nouvelle facture</button>
+        </div>
+        <div class="card">
+          <div class="mb-4 flex flex-wrap gap-4">
+            <input type="text" class="input" style="max-width: 300px;" placeholder="Rechercher..." id="invoiceSearch" oninput="filterInvoices()">
+            <select class="input" style="max-width: 200px;" id="invoiceStatusFilter" onchange="filterInvoices()">
+              <option value="">Tous les statuts</option>
+              <option value="pending">En attente</option>
+              <option value="partial">Partiel</option>
+              <option value="paid">Payée</option>
+              <option value="overdue">En retard</option>
+            </select>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>N° Facture</th>
+                  <th>Client</th>
+                  <th>Date</th>
+                  <th>Montant TTC</th>
+                  <th>Statut</th>
+                  <th>Source</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="invoices-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bons de livraison -->
+      <div id="page-deliveries" class="page hidden">
+        <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Bons de livraison</h2>
+          <button class="btn btn-primary" onclick="openDeliveryModal()"><i class="fas fa-plus"></i> Nouveau BL</button>
+        </div>
+        <div class="card">
+          <div class="mb-4 flex flex-wrap gap-4">
+            <input type="text" class="input" style="max-width: 300px;" placeholder="Rechercher..." id="deliverySearch" oninput="filterDeliveries()">
+            <select class="input" style="max-width: 200px;" id="deliveryStatusFilter" onchange="filterDeliveries()">
+              <option value="">Tous les statuts</option>
+              <option value="draft">Brouillon</option>
+              <option value="sent">Envoyé</option>
+              <option value="delivered">Livré</option>
+            </select>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>N° BL</th>
+                  <th>Client</th>
+                  <th>Date</th>
+                  <th>Statut</th>
+                  <th>Source</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="deliveries-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vente Rapide POS -->
+      <div id="page-pos-system" class="page hidden">
+        <h2 class="text-2xl font-bold mb-6">Vente Rapide</h2>
+
+        <!-- Stats du mois -->
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:#fed7aa;">
+                <i class="fas fa-cash-register" style="color:#f97316;"></i>
+              </div>
+              <span style="color:var(--text-muted);">Ventes ce mois</span>
+            </div>
+            <div class="stat-value" id="pos-stat-total" style="color:#f97316;">0 Ar</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:#d1fae5;">
+                <i class="fas fa-check-circle" style="color:#059669;"></i>
+              </div>
+              <span style="color:var(--text-muted);">Encaissé (Avances)</span>
+            </div>
+            <div class="stat-value" id="pos-stat-avance" style="color:#059669;">0 Ar</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:#fee2e2;">
+                <i class="fas fa-hourglass-half" style="color:#ef4444;"></i>
+              </div>
+              <span style="color:var(--text-muted);">Reste à recouvrer</span>
+            </div>
+            <div class="stat-value" id="pos-stat-reste" style="color:#ef4444;">0 Ar</div>
+          </div>
+          <div class="stat-card">
+            <div class="flex items-center gap-3 mb-2">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:#dbeafe;">
+                <i class="fas fa-receipt" style="color:#2563eb;"></i>
+              </div>
+              <span style="color:var(--text-muted);">Nb de ventes / recouvrement</span>
+            </div>
+            <div class="stat-value" id="pos-stat-count" style="color:#2563eb;">0 / 0</div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+          <!-- Saisie commande -->
+          <div class="card">
+            <h3 class="text-lg font-bold mb-4">Enregistrer une Vente</h3>
+            <p class="text-sm mb-2" style="color:var(--text-muted);">Collez ici les informations du commercial :</p>
+            <textarea id="pos-raw-input" class="input h-52 font-mono text-sm"
+              placeholder="Client #13103&#10;Client : Mr Fabien&#10;Contact : 034 xx xx xx&#10;Lieu : Antananarivo&#10;Commandes : 2x Produit A&#10;Total : 150000&#10;Avance : 100000&#10;Reste à payer : 50000"></textarea>
+            <div class="mt-4 flex flex-wrap gap-3">
+              <button onclick="processQuickSale()" class="btn btn-primary">
+                <i class="fas fa-print"></i> Enregistrer &amp; Imprimer
+              </button>
+              <button onclick="document.getElementById('pos-raw-input').value=''" class="btn btn-secondary">
+                <i class="fas fa-eraser"></i> Effacer
+              </button>
+            </div>
+          </div>
+
+          <!-- Liste recouvrement -->
+          <div class="card">
+            <h3 class="text-lg font-bold mb-4">Recouvrements en attente</h3>
+            <div id="pos-recouvrement-list" class="space-y-3">
+              <p style="color:var(--text-muted); font-size:.875rem;">Chargement...</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tableau des ventes du mois -->
+        <div class="card">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="text-lg font-bold">Ventes du mois</h3>
+            <button onclick="refreshPOSData()" class="btn btn-secondary"><i class="fas fa-sync-alt"></i> Actualiser</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Client</th>
+                  <th>Contact</th>
+                  <th>Lieu</th>
+                  <th>Total</th>
+                  <th>Avance</th>
+                  <th>Reste</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="pos-sales-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Loading -->
+  <div id="loading" class="loading-overlay">
+    <div class="spinner mb-4"></div>
+    <div id="loadingText" class="text-sm opacity-90">Chargement...</div>
+  </div>
+
+  <!-- Modals container -->
+  <div id="modalRoot"></div>
+
+
+<script>
+// Config GAS — même URL que le CRM
+window.GAS_URL = localStorage.getItem('facturepro_gas_url') || '';
+if (!window.GAS_URL) {
+  const url = prompt("Entrez l'URL de votre Google Apps Script (même URL que le CRM) :");
+  if (url) {
+    localStorage.setItem('facturepro_gas_url', url);
+    window.GAS_URL = url;
+  }
+}
+document.addEventListener('DOMContentLoaded', function() {
+  const el = document.getElementById('fact-gas-status');
+  if (el) el.textContent = window.GAS_URL ? 'GAS: connecté ✓' : 'GAS: non configuré';
+});
+</script>
+
+  <script>
+    // ====================================================
+    // FACTUREPRO - LOGIQUE CLIENT (version Google Apps Script)
+    // ====================================================
+
+    const CURRENCY = { code: "MGA", symbol: "Ar", locale: "fr-MG", decimals: 0 };
+
+    let clients = [];
+    let quotes = [];
+    let invoices = [];
+    let deliveries = [];
+
+    function parseNumber(value){
+      if (value === null || value === undefined) return 0;
+      if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+      let s = String(value).trim();
+      if (!s) return 0;
+      s = s.replace(/[\s\u00A0\u202F]/g, "");
+      s = s.replace(/[^\d,.\-]/g, "");
+      const lastComma = s.lastIndexOf(",");
+      const lastDot = s.lastIndexOf(".");
+      if (lastComma !== -1 && lastDot !== -1){
+        if (lastComma > lastDot){
+          s = s.replace(/\./g, "");
+          s = s.replace(",", ".");
+        } else {
+          s = s.replace(/,/g, "");
+        }
+      } else if (lastComma !== -1){
+        s = s.replace(",", ".");
+      }
+      const n = Number(s);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    function formatAr(value){
+      const n = parseNumber(value);
+      try {
+        return new Intl.NumberFormat(CURRENCY.locale, {
+          style: "currency",
+          currency: CURRENCY.code,
+          minimumFractionDigits: CURRENCY.decimals,
+          maximumFractionDigits: CURRENCY.decimals
+        }).format(n);
+      } catch(e) {
+        return Math.round(n).toLocaleString("fr-FR") + " " + CURRENCY.symbol;
+      }
+    }
+
+    function numberToWordsFr(value){
+      const n = Math.round(parseNumber(value));
+      if (!Number.isFinite(n)) return "";
+      if (n === 0) return "zero";
+      if (n < 0) return "moins " + numberToWordsFr(-n);
+
+      const units = ["zero","un","deux","trois","quatre","cinq","six","sept","huit","neuf","dix","onze","douze","treize","quatorze","quinze","seize"];
+      const tens = ["","", "vingt","trente","quarante","cinquante","soixante","soixante","quatre-vingt","quatre-vingt"];
+
+      function twoDigits(num){
+        if (num < 17) return units[num];
+        if (num < 20) return "dix-" + units[num - 10];
+        const ten = Math.floor(num / 10);
+        const unit = num % 10;
+        if (ten === 7 || ten === 9) {
+          const base = ten === 7 ? 60 : 80;
+          return twoDigits(base) + "-" + twoDigits(num - base);
+        }
+        const tenWord = tens[ten];
+        if (ten === 8 && unit === 0) return "quatre-vingts";
+        if (unit === 0) return tenWord;
+        if (unit === 1 && (ten >= 2 && ten <= 6)) return tenWord + "-et-un";
+        return tenWord + "-" + units[unit];
+      }
+
+      function threeDigits(num){
+        const hundred = Math.floor(num / 100);
+        const rest = num % 100;
+        if (hundred === 0) return twoDigits(rest);
+        if (hundred === 1) {
+          return rest === 0 ? "cent" : "cent " + twoDigits(rest);
+        }
+        const hundredWord = units[hundred] + " cent";
+        return rest === 0 ? hundredWord + "s" : hundredWord + " " + twoDigits(rest);
+      }
+
+      function chunk(num, singular, plural){
+        if (num === 0) return "";
+        if (num === 1) return singular;
+        return threeDigits(num) + " " + plural;
+      }
+
+      const billions = Math.floor(n / 1000000000);
+      const millions = Math.floor((n % 1000000000) / 1000000);
+      const thousands = Math.floor((n % 1000000) / 1000);
+      const rest = n % 1000;
+
+      const parts = [];
+      if (billions) parts.push(chunk(billions, "un milliard", "milliards"));
+      if (millions) parts.push(chunk(millions, "un million", "millions"));
+      if (thousands) parts.push(thousands === 1 ? "mille" : threeDigits(thousands) + " mille");
+      if (rest) parts.push(threeDigits(rest));
+      return parts.join(" ");
+    }
+
+    function setLoading(on, text = "Traitement..."){
+      const el = document.getElementById("loading");
+      const t = document.getElementById("loadingText");
+      if (!el || !t) return;
+      t.textContent = text;
+      el.style.display = on ? "flex" : "none";
+    }
+
+    let loadAllDataTimer = null;
+
+    function ensureScriptRun(){
+      if (typeof google === "undefined" || !google.script || !google.script.run){
+        setLoading(false);
+        alert("google.script.run introuvable. Ouvrez l'app via Apps Script (Déployer > Application Web).");
+        return false;
+      }
+      return true;
+    }
+
+    function uid(prefix = ""){
+      return prefix + "-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2,7).toUpperCase();
+    }
+
+    function todayISO(){
+      return new Date().toISOString().slice(0,10);
+    }
+
+    function computeTotals(items = [], discountRate = 0){
+      let subTotal = 0;
+      for (const it of items){
+        const qty = Math.max(0, parseNumber(it.qty || 0));
+        const unitPrice = Math.max(0, parseNumber(it.unitPrice || 0));
+        subTotal += qty * unitPrice;
+      }
+      const headerDiscount = Math.min(Math.max(parseNumber(discountRate || 0), 0), 100);
+      const afterDiscount = subTotal * (1 - headerDiscount / 100);
+      return {
+        subTotal: Math.round(subTotal),
+        taxTotal: 0,
+        totalTTC: Math.round(afterDiscount)
+      };
+    }
+
+    function lineTotal(it){
+      const qty = Math.max(0, parseNumber(it.qty||0));
+      const unitPrice = Math.max(0, parseNumber(it.unitPrice||0));
+      return Math.round(qty * unitPrice);
+    }
+
+    function toggleSidebar(){
+      const sidebar = document.getElementById("sidebar");
+      const overlay = document.getElementById("sidebarOverlay");
+      const isOpen = sidebar.classList.toggle("open");
+      overlay.style.display = isOpen ? "block" : "none";
+    }
+
+    function showPage(page){
+      document.querySelectorAll(".page").forEach(p => p.classList.add("hidden"));
+      document.getElementById(`page-${page}`).classList.remove("hidden");
+      document.querySelectorAll(".nav-btn[data-page]").forEach(b => b.classList.remove("active"));
+      document.querySelector(`.nav-btn[data-page="${page}"]`)?.classList.add("active");
+      if (window.innerWidth <= 768) toggleSidebar();
+    }
+
+    // ====================================================
+    // CHARGEMENT INITIAL DES DONNÉES
+    // ====================================================
+
+    function loadAllData(callback = renderAll) {
+  if (!ensureScriptRun()) return;
+  const token = (typeof getAuthToken === "function") ? getAuthToken() : null;
+  if (!token) {
+    if (typeof showLoginScreen === "function") showLoginScreen("login");
+    return;
+  }
+  setLoading(true, "Chargement des données...");
+  if (loadAllDataTimer) clearTimeout(loadAllDataTimer);
+  loadAllDataTimer = setTimeout(function(){
+    setLoading(false);
+    alert("Chargement trop long. Vérifiez l'autorisation Apps Script ou l'accès au Google Sheet.");
+  }, 15000);
+
+  google.script.run
+    .withSuccessHandler(function(data) {
+      if (loadAllDataTimer) clearTimeout(loadAllDataTimer);
+
+      let payload = data;
+      if (typeof payload === "string") {
+        try { payload = JSON.parse(payload); } catch (e) {}
+      }
+
+      if (!payload || typeof payload !== "object") {
+        console.error("getAllData returned:", data);
+        alert("Erreur: réponse serveur vide ou invalide. Vérifiez les exécutions Apps Script.");
+        setLoading(false);
+        return;
+      }
+      if (payload.error) {
+        console.error("getAllData error:", payload.error);
+        alert("Erreur serveur: " + payload.error);
+        setLoading(false);
+        return;
+      }
+
+      clients = payload.clients || [];
+      quotes = payload.quotes || [];
+      invoices = payload.invoices || [];
+      deliveries = payload.deliveries || [];
+
+      try {
+        callback();
+      } catch (e) {
+        console.error(e);
+        alert("Erreur lors du rendu: " + (e && e.message ? e.message : e));
+      } finally {
+        setLoading(false);
+      }
+    })
+    .withFailureHandler(function(err) {
+      if (loadAllDataTimer) clearTimeout(loadAllDataTimer);
+      console.error(err);
+      const msg = (err && err.message ? err.message : err);
+      if (String(msg || "").includes("Accès refusé") && typeof logout === "function") {
+        logout();
+        return;
+      }
+      alert("Erreur de chargement des données : " + msg);
+      setLoading(false);
+    })
+    .getAllDataText(token);
+}
+
+    // Initialisation après authentification
+    function startApp(){
+      loadAllData();
+    }
+
+    // ====================================================
+    // RENDU DES PAGES (extrait simplifié - à compléter selon besoin)
+    // ====================================================
+
+    function renderAll(){
+      renderDashboard();
+      renderClients();
+      renderQuotes();
+      renderInvoices();
+      renderDeliveries();
+    }
+
+    function renderDashboard(){
+      document.getElementById("stat-clients").textContent = clients.length;
+      document.getElementById("stat-quotes").textContent = quotes.length;
+      const unpaid = invoices.filter(i => ["pending","partial","overdue"].includes(String(i.status || "").toLowerCase()));
+      const paid = invoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+      const unpaidTotal = unpaid.reduce((sum, inv) => sum + getInvoiceDue(inv), 0);
+      const paidTotal = paid.reduce((sum, inv) => sum + getInvoiceTotal(inv), 0);
+      document.getElementById("stat-unpaid").textContent = formatAr(unpaidTotal);
+      document.getElementById("stat-paid").textContent = formatAr(paidTotal);
+      renderRecentQuotes();
+      renderPendingInvoices();
+    }
+
+    function renderClients(list = clients){
+      const tbody = document.getElementById("clients-table");
+      tbody.innerHTML = "";
+      const rows = Array.isArray(list) ? list : [];
+      if (!rows.length) {
+        renderEmptyRow(tbody, 8, "Aucun client");
+        if (typeof updateSelectedClientsState === "function") updateSelectedClientsState();
+        return;
+      }
+      rows.forEach(c => {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><input type="checkbox" class="client-select" data-id="${c.id}" onchange="updateSelectedClientsState()"></td>
+          <td class="font-semibold">${escapeHtml(c.name || "")}</td>
+          <td>${escapeHtml(c.contact || "")}</td>
+          <td>${escapeHtml(c.address || "")}</td>
+          <td>${escapeHtml(c.phone || "")}</td>
+          <td>${escapeHtml(c.nif || "")}</td>
+          <td>${escapeHtml(c.stat || "")}</td>
+          <td class="flex gap-2">
+            <button class="btn btn-secondary" onclick="openClientModal('${c.id}')"><i class="fas fa-pen"></i></button>
+            <button class="btn btn-danger" onclick="deleteClient('${c.id}')"><i class="fas fa-trash"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+      if (typeof updateSelectedClientsState === "function") updateSelectedClientsState();
+    }
+
+    function renderQuotes(list = quotes){
+      const tbody = document.getElementById("quotes-table");
+      tbody.innerHTML = "";
+      const rows = Array.isArray(list) ? list.slice() : [];
+      if (!rows.length) {
+        renderEmptyRow(tbody, 6, "Aucun devis");
+        return;
+      }
+      rows.sort(sortByDateDesc);
+      rows.forEach(q => {
+        const status = String(q.status || "").toLowerCase();
+        const isConverted = status === "converted";
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="font-semibold">${escapeHtml(q.number || q.id || "")}</td>
+          <td>${escapeHtml(getClientName(q.clientId))}</td>
+          <td>${escapeHtml(formatDate(q.date))}</td>
+          <td>${formatAr(getDocTotal(q))}</td>
+          <td>${statusBadge("quote", status)}</td>
+          <td class="flex gap-2">
+            <button class="btn btn-secondary" onclick="openQuoteModal('${q.id}')"><i class="fas fa-pen"></i></button>
+            <button class="btn btn-secondary" onclick="printDocument('quote', '${q.id}')" title="Imprimer"><i class="fas fa-print"></i></button>
+            <button class="btn btn-success" ${isConverted ? "disabled" : ""} onclick="convertQuoteToInvoice('${q.id}')" title="Convertir en facture"><i class="fas fa-file-invoice"></i></button>
+            <button class="btn btn-danger" onclick="deleteQuote('${q.id}')"><i class="fas fa-trash"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderInvoices(list = invoices){
+      const tbody = document.getElementById("invoices-table");
+      tbody.innerHTML = "";
+      const rows = Array.isArray(list) ? list.slice() : [];
+      if (!rows.length) {
+        renderEmptyRow(tbody, 7, "Aucune facture");
+        return;
+      }
+      rows.sort(sortByDateDesc);
+      rows.forEach(inv => {
+        const source = inv.sourceQuoteId ? ("Devis " + (getQuoteNumberById(inv.sourceQuoteId) || inv.sourceQuoteId)) : "-";
+        const status = String(inv.status || "").toLowerCase();
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="font-semibold">${escapeHtml(inv.number || inv.id || "")}</td>
+          <td>${escapeHtml(getClientName(inv.clientId))}</td>
+          <td>${escapeHtml(formatDate(inv.date))}</td>
+          <td>${formatAr(getInvoiceTotal(inv))}</td>
+          <td>${statusBadge("invoice", status)}</td>
+          <td>${escapeHtml(source)}</td>
+          <td class="flex gap-2">
+            <button class="btn btn-secondary" onclick="openInvoiceModal('${inv.id}')"><i class="fas fa-pen"></i></button>
+            <button class="btn btn-secondary" onclick="printDocument('invoice', '${inv.id}')" title="Imprimer"><i class="fas fa-print"></i></button>
+            <button class="btn btn-success" onclick="convertInvoiceToDelivery('${inv.id}')" title="Convertir en BL"><i class="fas fa-truck"></i></button>
+            <button class="btn btn-danger" onclick="deleteInvoice('${inv.id}')"><i class="fas fa-trash"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderDeliveries(list = deliveries){
+      const tbody = document.getElementById("deliveries-table");
+      tbody.innerHTML = "";
+      const rows = Array.isArray(list) ? list.slice() : [];
+      if (!rows.length) {
+        renderEmptyRow(tbody, 6, "Aucun bon de livraison");
+        return;
+      }
+      rows.sort(sortByDateDesc);
+      rows.forEach(d => {
+        const source = getDeliverySourceLabel(d);
+        const status = String(d.status || "").toLowerCase();
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td class="font-semibold">${escapeHtml(d.number || d.id || "")}</td>
+          <td>${escapeHtml(getClientName(d.clientId))}</td>
+          <td>${escapeHtml(formatDate(d.date))}</td>
+          <td>${statusBadge("delivery", status)}</td>
+          <td>${escapeHtml(source)}</td>
+          <td class="flex gap-2">
+            <button class="btn btn-secondary" onclick="openDeliveryModal('${d.id}')"><i class="fas fa-pen"></i></button>
+            <button class="btn btn-secondary" onclick="printDocument('delivery', '${d.id}')" title="Imprimer"><i class="fas fa-print"></i></button>
+            <button class="btn btn-danger" onclick="deleteDelivery('${d.id}')"><i class="fas fa-trash"></i></button>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderRecentQuotes(){
+      const container = document.getElementById("recent-quotes");
+      if (!container) return;
+      const rows = quotes.slice().sort(sortByDateDesc).slice(0, 5);
+      if (!rows.length) {
+        container.innerHTML = '<p style="color: var(--text-muted);">Aucun devis</p>';
+        return;
+      }
+      container.innerHTML = "";
+      rows.forEach(q => {
+        const div = document.createElement("div");
+        div.className = "flex items-center justify-between p-3 rounded-lg border";
+        div.innerHTML = `
+          <div>
+            <div class="font-semibold">${escapeHtml(q.number || q.id || "")}</div>
+            <div class="text-xs" style="color: var(--text-muted);">${escapeHtml(getClientName(q.clientId))} - ${escapeHtml(formatDate(q.date))}</div>
+          </div>
+          <div class="text-sm font-semibold">${formatAr(getDocTotal(q))}</div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function renderPendingInvoices(){
+      const container = document.getElementById("pending-invoices");
+      if (!container) return;
+      const rows = invoices
+        .filter(i => ["pending","partial","overdue"].includes(String(i.status || "").toLowerCase()))
+        .slice()
+        .sort(sortByDateDesc)
+        .slice(0, 5);
+      if (!rows.length) {
+        container.innerHTML = '<p style="color: var(--text-muted);">Aucune facture en attente</p>';
+        return;
+      }
+      container.innerHTML = "";
+      rows.forEach(inv => {
+        const div = document.createElement("div");
+        div.className = "flex items-center justify-between p-3 rounded-lg border";
+        div.innerHTML = `
+          <div>
+            <div class="font-semibold">${escapeHtml(inv.number || inv.id || "")}</div>
+            <div class="text-xs" style="color: var(--text-muted);">${escapeHtml(getClientName(inv.clientId))} - ${escapeHtml(formatDate(inv.date))}</div>
+          </div>
+          <div class="text-right">
+            <div class="text-sm font-semibold">${formatAr(getInvoiceDue(inv))}</div>
+            <div>${statusBadge("invoice", inv.status)}</div>
+          </div>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    function renderEmptyRow(tbody, colspan, text){
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="${colspan}" style="color: var(--text-muted); padding: 1rem;">${escapeHtml(text || "")}</td>`;
+      tbody.appendChild(tr);
+    }
+
+    function statusBadge(type, status){
+      const s = String(status || "").toLowerCase();
+      const map = {
+        quote: {
+          draft: { cls: "badge-draft", label: "Brouillon" },
+          sent: { cls: "badge-sent", label: "Envoyé" },
+          converted: { cls: "badge-converted", label: "Converti" }
+        },
+        invoice: {
+          pending: { cls: "badge-pending", label: "En attente" },
+          partial: { cls: "badge-partial", label: "Partiel" },
+          paid: { cls: "badge-paid", label: "Payée" },
+          overdue: { cls: "badge-overdue", label: "En retard" }
+        },
+        delivery: {
+          draft: { cls: "badge-draft", label: "Brouillon" },
+          sent: { cls: "badge-sent", label: "Envoyé" },
+          delivered: { cls: "badge-paid", label: "Livré" }
+        }
+      };
+      const entry = (map[type] && map[type][s]) ? map[type][s] : { cls: "badge-draft", label: status || "-" };
+      return `<span class="badge ${entry.cls}">${entry.label}</span>`;
+    }
+
+    function normalizeText(value){
+      return String(value ?? "").toLowerCase().trim();
+    }
+
+    function formatDate(value){
+      if (!value) return "";
+      const d = new Date(value);
+      if (isNaN(d)) return String(value);
+      return d.toLocaleDateString("fr-FR");
+    }
+
+    function getClientName(clientId){
+      const c = clients.find(x => x.id === clientId);
+      return c ? (c.name || c.id) : "Client inconnu";
+    }
+
+    function getQuoteNumberById(id){
+      const q = quotes.find(x => x.id === id);
+      return q ? (q.number || q.id) : (id || "");
+    }
+
+    function getInvoiceNumberById(id){
+      const inv = invoices.find(x => x.id === id);
+      return inv ? (inv.number || inv.id) : (id || "");
+    }
+
+    function getDeliverySourceLabel(delivery){
+      if (delivery && delivery.sourceInvoiceId) {
+        return "Facture " + getInvoiceNumberById(delivery.sourceInvoiceId);
+      }
+      if (delivery && delivery.sourceQuoteId) {
+        return "Devis " + getQuoteNumberById(delivery.sourceQuoteId);
+      }
+      return "-";
+    }
+
+    function getDocTotals(doc){
+      if (doc && doc.totals && typeof doc.totals.totalTTC !== "undefined") return doc.totals;
+      return computeTotals(doc.items || [], doc.discountRate || 0);
+    }
+
+    function getDocTotal(doc){
+      const totals = getDocTotals(doc);
+      return parseNumber((totals && totals.totalTTC) || 0);
+    }
+
+    function getInvoiceTotal(inv){
+      return getDocTotal(inv);
+    }
+
+    function getInvoiceDue(inv){
+      const total = getDocTotal(inv);
+      const acompte = parseNumber(inv && inv.acompte ? inv.acompte : 0);
+      return Math.max(0, total - acompte);
+    }
+
+    function sortByDateDesc(a, b){
+      const da = new Date(a && a.date ? a.date : 0);
+      const db = new Date(b && b.date ? b.date : 0);
+      const ta = isNaN(da) ? 0 : da.getTime();
+      const tb = isNaN(db) ? 0 : db.getTime();
+      return tb - ta;
+    }
+
+    function escapeHtml(str){
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // ====================================================
+    // CRUD de base (exemples - à adapter avec google.script.run)
+    // ====================================================
+
+    function openClientModal(id = null){
+      // ... logique du modal (comme dans votre code original)
+      // Puis pour sauvegarder :
+      // google.script.run.withSuccessHandler(...).saveClient(clientData);
+    }
+
+    // Ajoutez les autres fonctions (saveQuote, deleteClient, convertQuoteToInvoice, etc.)
+    // en suivant le modèle avec google.script.run
+</script>
+<?!= include('JavaScript'); ?>
+</body>
+</html>
+
+
+
+
+
+
+
+
+

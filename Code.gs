@@ -1,59 +1,83 @@
 // ============================================================
-//  FOREVER MG — CRM Backend (Google Apps Script)
-//  Modules : Dashboard · Devis · Purchase Orders · Gmail
-//  Version : 1.0 — Juin 2026
+//  FOREVER MG — CRM + FACTURATION (Code.gs fusionné)
+//  Modules : CRM (Dashboard · Devis · PO · Gmail)
+//           + Facturation (Clients · Devis · Factures · BL · POS)
+//  Version : 2.0 — Juin 2026
 // ============================================================
 
-// ---------- CONFIG ----------
+var SPREADSHEET_ID = ""; // Laissez vide si le script est lié au Sheets
+
+// ---------- CONFIG CRM ----------
 const CONFIG = {
   SHEET_DEVIS: "Devis",
   SHEET_PO:    "PurchaseOrders",
   SHEET_LOG:   "Log",
-  GMAIL_LABEL: "CRM-FOREVER",
-  VERSION:     "1.0"
+  VERSION:     "2.0"
 };
 
 // ============================================================
-//  POINT D'ENTRÉE HTTP
+//  POINT D'ENTRÉE HTTP — ROUTEUR UNIFIÉ
 // ============================================================
 function doGet(e) {
+  // Mode facturation (FacturePro)
+  if (e && e.parameter && e.parameter.interface === "1") {
+    return HtmlService.createHtmlOutputFromFile('Interface')
+      .setTitle('FOREVER MG — Facturation');
+  }
+  if (e && e.parameter && e.parameter.action) {
+    return handleSyncGet_(e);
+  }
+  if (e && e.parameter && e.parameter.data === "1") {
+    var token = e.parameter.token || "";
+    var user = requireAuth(token);
+    var data = sanitizeDataForRole_(user.role, getAllDataInternal());
+    return ContentService
+      .createTextOutput(JSON.stringify(data, null, 2))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  if (e && e.parameter && e.parameter.ping === "1") {
+    return ContentService
+      .createTextOutput(JSON.stringify(healthCheck(), null, 2))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+  // Mode CRM (PWA principale)
   return HtmlService
     .createHtmlOutputFromFile("index")
     .setTitle("FOREVER MG — CRM")
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
+function onInstall(e) { onOpen(e); }
+
 function doPost(e) {
+  // Mode facturation (sync)
+  if (e && e.parameter && e.parameter.action) {
+    return handleSyncPost_(e);
+  }
+  // Mode CRM (JSON API)
   try {
     const payload = JSON.parse(e.postData.contents);
-    const cmd     = payload.cmd; // "cmd" au lieu de "action" pour éviter le conflit avec le champ "Prochaine action"
+    const cmd     = payload.cmd;
     let result;
-
     switch (cmd) {
-      // --- DEVIS ---
-      case "getDevis":       result = getDevis(payload);       break;
-      case "createDevis":    result = createDevis(payload);    break;
-      case "updateDevis":    result = updateDevis(payload);    break;
-      case "deleteDevis":    result = deleteDevis(payload);    break;
-      // --- PO ---
-      case "getPO":          result = getPO(payload);          break;
-      case "createPO":       result = createPO(payload);       break;
-      case "updatePO":       result = updatePO(payload);       break;
-      // --- DASHBOARD ---
-      case "getDashboard":   result = getDashboard();          break;
-      // --- GMAIL ---
-      case "getGmailLeads":        result = getGmailLeads();              break;
-      case "createDevisFromEmail": result = createDevisFromEmail(payload);break;
-      case "sendEmail":            result = sendEmail(payload);           break;
-      case "createDraft":          result = createDraft(payload);         break;
+      case "getDevis":             result = getDevis(payload);             break;
+      case "createDevis":          result = createDevis(payload);          break;
+      case "updateDevis":          result = updateDevis(payload);          break;
+      case "deleteDevis":          result = deleteDevis(payload);          break;
+      case "getPO":                result = getPO(payload);                break;
+      case "createPO":             result = createPO(payload);             break;
+      case "updatePO":             result = updatePO(payload);             break;
+      case "getDashboard":         result = getDashboard();                break;
+      case "getGmailLeads":        result = getGmailLeads();               break;
+      case "createDevisFromEmail": result = createDevisFromEmail(payload); break;
+      case "sendEmail":            result = sendEmail(payload);            break;
+      case "createDraft":          result = createDraft(payload);          break;
       default:
         result = { ok: false, error: "Commande inconnue : " + cmd };
     }
-
     return ContentService
       .createTextOutput(JSON.stringify(result))
       .setMimeType(ContentService.MimeType.JSON);
-
   } catch (err) {
     return ContentService
       .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
@@ -61,9 +85,10 @@ function doPost(e) {
   }
 }
 
-// ============================================================
-//  INITIALISATION DES FEUILLES
-// ============================================================
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
 function initSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -653,4 +678,1415 @@ function installTriggers() {
   ScriptApp.newTrigger("checkRelancesQuotidiennes")
     .timeBased().everyDays(1).atHour(8).create();
   return { ok: true, message: "Trigger quotidien installé (08h00)." };
+}
+
+// ============================================================
+//  MODULE FACTURATION (FacturePro — intégré dans CRM)
+// ============================================================
+
+// ---------------------------
+// Auth / Users
+// ---------------------------
+var USERS_HEADERS = ['Username', 'Email', 'Password', 'PasswordHash', 'Salt', 'Role', 'Active', 'DisplayName'];
+
+function getAuthSecret() {
+  var props = PropertiesService.getScriptProperties();
+  var secret = props.getProperty('AUTH_SECRET');
+  if (!secret) {
+    secret = Utilities.getUuid() + Utilities.getUuid();
+    props.setProperty('AUTH_SECRET', secret);
+  }
+  return secret;
+}
+
+function makeSalt() {
+  var raw = Utilities.getUuid() + String(new Date().getTime());
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(digest).slice(0, 16);
+}
+
+function hashPassword(password, salt) {
+  var raw = String(salt || '') + '|' + String(password || '');
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(digest);
+}
+
+function signAuthPayload(payload) {
+  var raw = String(payload || '') + '|' + getAuthSecret();
+  var digest = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, raw, Utilities.Charset.UTF_8);
+  return Utilities.base64Encode(digest);
+}
+
+function makeAuthToken(username, ttlMinutes) {
+  var ttl = typeof ttlMinutes === 'number' ? ttlMinutes : 720;
+  var expires = new Date().getTime() + ttl * 60 * 1000;
+  var payload = String(username || '') + '|' + String(expires);
+  var sig = signAuthPayload(payload);
+  var tokenRaw = payload + '|' + sig;
+  return Utilities.base64EncodeWebSafe(tokenRaw);
+}
+
+function verifyAuthToken(token) {
+  if (!token) return null;
+  try {
+    var raw = Utilities.newBlob(Utilities.base64DecodeWebSafe(token)).getDataAsString();
+    var parts = raw.split('|');
+    if (parts.length < 3) return null;
+    var username = parts[0];
+    var expires = parseInt(parts[1], 10);
+    var sig = parts.slice(2).join('|');
+    if (!username || !expires) return null;
+    if (new Date().getTime() > expires) return null;
+    var payload = username + '|' + expires;
+    var expected = signAuthPayload(payload);
+    if (expected !== sig) return null;
+    return username;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getUsersSheet() {
+  return getOrCreateSheet('Users', USERS_HEADERS);
+}
+
+function ensureUsersHeaders(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < 1) {
+    sheet.appendRow(USERS_HEADERS);
+    return USERS_HEADERS.slice();
+  }
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var changed = false;
+  USERS_HEADERS.forEach(function(h){
+    if (headers.indexOf(h) === -1) {
+      headers.push(h);
+      changed = true;
+    }
+  });
+  if (changed) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return headers;
+}
+
+function getUsersMeta() {
+  var sheet = getUsersSheet();
+  var headers = ensureUsersHeaders(sheet);
+  var map = headerMap(headers);
+  return { sheet: sheet, headers: headers, map: map };
+}
+
+function hasUsers() {
+  var meta = getUsersMeta();
+  return meta.sheet.getLastRow() > 1;
+}
+
+function isActiveFlag(value) {
+  var v = String(value || '').trim().toLowerCase();
+  if (!v) return true;
+  return !(v === 'false' || v === '0' || v === 'no' || v === 'inactive');
+}
+
+function findUserRow(username) {
+  var meta = getUsersMeta();
+  var data = meta.sheet.getDataRange().getValues();
+  var target = String(username || '').trim().toLowerCase();
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var u = String(row[meta.map.Username] || '').trim().toLowerCase();
+    var mail = "";
+    if (typeof meta.map.Email !== "undefined") {
+      mail = String(row[meta.map.Email] || '').trim().toLowerCase();
+    }
+    if ((u && u === target) || (mail && mail === target)) {
+      return { rowIndex: i + 1, row: data[i], meta: meta };
+    }
+  }
+  return null;
+}
+
+function userFromRow(row, map) {
+  return {
+    username: row[map.Username] || '',
+    role: normalizeRole_(row[map.Role] || ''),
+    active: isActiveFlag(row[map.Active]),
+    displayName: row[map.DisplayName] || row[map.Username] || ''
+  };
+}
+
+function validateToken(token) {
+  var username = verifyAuthToken(token);
+  if (!username) return null;
+  var found = findUserRow(username);
+  if (!found || !found.row) return null;
+  var user = userFromRow(found.row, found.meta.map);
+  if (!user.active) return null;
+  return user;
+}
+
+function requireAuth(token) {
+  var user = validateToken(token);
+  if (!user) throw new Error('Accès refusé. Merci de vous reconnecter.');
+  user.role = normalizeRole_(user.role);
+  return user;
+}
+
+function createFirstAdmin(username, password, displayName) {
+  if (hasUsers()) return { ok: false, error: 'Des utilisateurs existent déjà.' };
+  var u = String(username || '').trim();
+  var p = String(password || '');
+  if (!u || !p) return { ok: false, error: 'Nom d’utilisateur et mot de passe requis.' };
+  var meta = getUsersMeta();
+  var salt = makeSalt();
+  var hash = hashPassword(p, salt);
+  var row = new Array(meta.headers.length);
+  row[meta.map.Username] = u;
+  if (typeof meta.map.Email !== "undefined") {
+    row[meta.map.Email] = u;
+  }
+  row[meta.map.Password] = '';
+  row[meta.map.PasswordHash] = hash;
+  row[meta.map.Salt] = salt;
+  row[meta.map.Role] = 'admin';
+  row[meta.map.Active] = 'true';
+  row[meta.map.DisplayName] = String(displayName || u);
+  meta.sheet.appendRow(row);
+  var token = makeAuthToken(u);
+  return { ok: true, token: token, user: userFromRow(row, meta.map) };
+}
+
+function authenticate(username, password) {
+  var found = findUserRow(username);
+  if (!found) return { ok: false, error: 'Utilisateur introuvable.' };
+  var row = found.row;
+  var meta = found.meta;
+  var map = meta.map;
+  var active = isActiveFlag(row[map.Active]);
+  if (!active) return { ok: false, error: 'Compte désactivé.' };
+  var plain = row[map.Password] || '';
+  var salt = row[map.Salt] || '';
+  var expected = row[map.PasswordHash] || '';
+  if (!expected && plain) {
+    if (String(password || '') !== String(plain || '')) return { ok: false, error: 'Mot de passe incorrect.' };
+    salt = makeSalt();
+    expected = hashPassword(password, salt);
+    row[map.Password] = '';
+    row[map.PasswordHash] = expected;
+    row[map.Salt] = salt;
+    while (row.length < meta.headers.length) row.push('');
+    meta.sheet.getRange(found.rowIndex, 1, 1, meta.headers.length).setValues([row]);
+  } else {
+    var actual = hashPassword(password, salt);
+    if (expected !== actual) return { ok: false, error: 'Mot de passe incorrect.' };
+  }
+  var token = makeAuthToken(row[map.Username]);
+  return { ok: true, token: token, user: userFromRow(row, map) };
+}
+
+// ---------------------------
+// RBAC
+// ---------------------------
+var PERM_ROLES = {
+  "sync.import": ["admin"],
+  "sync.export": ["admin"],
+  "sync.history": ["admin"],
+  "settings.write": ["admin"],
+  "users.manage": ["admin"],
+  "finance.view_amounts": ["admin", "manager", "sales", "accounting"],
+  "clients.read": ["admin", "manager", "sales", "accounting", "logistics", "viewer"],
+  "clients.write": ["admin", "manager", "sales", "accounting"],
+  "clients.delete": ["admin", "manager", "sales"],
+  "quotes.read": ["admin", "manager", "sales", "accounting", "logistics", "viewer"],
+  "quotes.write": ["admin", "manager", "sales"],
+  "quotes.delete": ["admin", "manager", "sales"],
+  "invoices.read": ["admin", "manager", "sales", "accounting", "logistics", "viewer"],
+  "invoices.write": ["admin", "manager", "sales", "accounting"],
+  "invoices.delete": ["admin", "manager"],
+  "invoices.status.update": ["admin", "manager", "accounting"],
+  "deliveries.read": ["admin", "manager", "sales", "accounting", "logistics", "viewer"],
+  "deliveries.write": ["admin", "manager", "logistics"],
+  "deliveries.delete": ["admin", "manager"]
+};
+
+function normalizeRole_(role) {
+  var r = String(role || '').trim().toLowerCase();
+  return r || "viewer";
+}
+
+function can_(role, perm) {
+  var r = normalizeRole_(role);
+  if (r === "admin") return true;
+  var roles = PERM_ROLES[perm] || [];
+  return roles.indexOf(r) !== -1;
+}
+
+function assertCan_(role, perm) {
+  if (!can_(role, perm)) {
+    throw new Error("FORBIDDEN");
+  }
+}
+
+function getRole_(email) {
+  var meta = getUsersMeta();
+  var map = meta.map;
+  var data = meta.sheet.getDataRange().getValues();
+  var target = String(email || '').trim().toLowerCase();
+  if (!target) return null;
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    var mail = "";
+    if (typeof map.Email !== "undefined") {
+      mail = String(row[map.Email] || '').trim().toLowerCase();
+    }
+    if (!mail && typeof map.Username !== "undefined") {
+      mail = String(row[map.Username] || '').trim().toLowerCase();
+    }
+    if (mail && mail === target) {
+      if (!isActiveFlag(row[map.Active])) return null;
+      return normalizeRole_(row[map.Role] || "");
+    }
+  }
+  return null;
+}
+
+function sanitizeDataForRole_(role, data) {
+  if (can_(role, "finance.view_amounts")) return data;
+  var clone = JSON.parse(JSON.stringify(data || {}));
+  function stripItem(it) {
+    if (!it || typeof it !== "object") return it;
+    delete it.unitPrice;
+    delete it.price;
+    delete it.amount;
+    delete it.total;
+    return it;
+  }
+  function stripDoc(doc) {
+    if (!doc || typeof doc !== "object") return doc;
+    if (Array.isArray(doc.items)) {
+      doc.items = doc.items.map(stripItem);
+    }
+    delete doc.totals;
+    delete doc.acompte;
+    delete doc.discountRate;
+    delete doc.discount;
+    delete doc.remainingDue;
+    delete doc.remaining_due;
+    delete doc.totalTTC;
+    delete doc.subTotal;
+    return doc;
+  }
+  if (Array.isArray(clone.quotes)) clone.quotes = clone.quotes.map(stripDoc);
+  if (Array.isArray(clone.invoices)) clone.invoices = clone.invoices.map(stripDoc);
+  if (Array.isArray(clone.deliveries)) clone.deliveries = clone.deliveries.map(stripDoc);
+  return clone;
+}
+
+function sanitizeHistoryForRole_(role, rows) {
+  if (can_(role, "finance.view_amounts")) return rows;
+  return (rows || []).map(function(row) {
+    var out = {};
+    for (var k in row) out[k] = row[k];
+    if (out.payload && typeof out.payload === "object") {
+      out.payload = sanitizeDataForRole_(role, out.payload);
+    }
+    return out;
+  });
+}
+
+// ---------------------------
+// Team Sync helpers
+// ---------------------------
+var HISTORY_HEADERS = ['Timestamp', 'UserEmail', 'Action', 'Rev', 'Payload'];
+
+function getSyncToken_() {
+  return PropertiesService.getScriptProperties().getProperty('SYNC_TOKEN') || '';
+}
+
+function validateSyncToken_(token) {
+  var expected = getSyncToken_();
+  if (!expected) return false;
+  return String(token || '') === expected;
+}
+
+function getSyncRev_() {
+  var raw = PropertiesService.getScriptProperties().getProperty('SYNC_REV');
+  var n = parseInt(raw, 10);
+  return isNaN(n) ? 0 : n;
+}
+
+function setSyncRev_(rev) {
+  PropertiesService.getScriptProperties().setProperty('SYNC_REV', String(rev || 0));
+}
+
+function getHistorySheet_() {
+  return getOrCreateSheet('History', HISTORY_HEADERS);
+}
+
+function appendHistory_(userEmail, action, rev, payload) {
+  var sheet = getHistorySheet_();
+  var row = [
+    new Date().toISOString(),
+    String(userEmail || ''),
+    String(action || ''),
+    rev || 0,
+    JSON.stringify(payload || {})
+  ];
+  sheet.appendRow(row);
+}
+
+function getHistoryRows_() {
+  var sheet = getHistorySheet_();
+  var data = sheet.getDataRange().getValues();
+  var rows = [];
+  for (var i = 1; i < data.length; i++) {
+    var payloadRaw = data[i][4];
+    var payload = payloadRaw;
+    if (typeof payloadRaw === "string") {
+      try { payload = JSON.parse(payloadRaw); } catch (e) {}
+    }
+    rows.push({
+      timestamp: data[i][0],
+      userEmail: data[i][1],
+      action: data[i][2],
+      rev: data[i][3],
+      payload: payload
+    });
+  }
+  return rows;
+}
+
+function jsonOutput_(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function handleSyncGet_(e) {
+  var action = e.parameter.action;
+  var token = e.parameter.token || "";
+  var userEmail = e.parameter.userEmail || e.parameter.email || "";
+  if (!validateSyncToken_(token)) return jsonOutput_({ ok: false, error: "UNAUTHORIZED" });
+  var role = getRole_(userEmail);
+  if (!role) return jsonOutput_({ ok: false, error: "FORBIDDEN" });
+
+  if (action === "import") {
+    if (!can_(role, "sync.import")) return jsonOutput_({ ok: false, error: "FORBIDDEN" });
+    var data = sanitizeDataForRole_(role, getAllDataInternal());
+    return jsonOutput_({ ok: true, rev: getSyncRev_(), data: data });
+  }
+
+  if (action === "history") {
+    if (!can_(role, "sync.history")) return jsonOutput_({ ok: false, error: "FORBIDDEN" });
+    var rows = sanitizeHistoryForRole_(role, getHistoryRows_());
+    return jsonOutput_({ ok: true, rev: getSyncRev_(), history: rows });
+  }
+
+  return jsonOutput_({ ok: false, error: "INVALID_ACTION" });
+}
+
+function handleSyncPost_(e) {
+  var action = e.parameter.action;
+  if (action !== "export") return jsonOutput_({ ok: false, error: "INVALID_ACTION" });
+  var payload = {};
+  if (e && e.postData && e.postData.contents) {
+    try { payload = JSON.parse(e.postData.contents); } catch (err) {}
+  }
+  var token = payload.token || e.parameter.token || "";
+  var userEmail = payload.userEmail || payload.email || e.parameter.userEmail || e.parameter.email || "";
+  if (!validateSyncToken_(token)) return jsonOutput_({ ok: false, error: "UNAUTHORIZED" });
+  var role = getRole_(userEmail);
+  if (!role) return jsonOutput_({ ok: false, error: "FORBIDDEN" });
+  if (!can_(role, "sync.export")) return jsonOutput_({ ok: false, error: "FORBIDDEN" });
+
+  var baseRev = parseInt(payload.baseRev || 0, 10);
+  var currentRev = getSyncRev_();
+  if (baseRev < currentRev) {
+    return jsonOutput_({ ok: false, error: "CONFLICT", currentRev: currentRev });
+  }
+
+  var data = payload.data || payload.state || payload.payload;
+  if (!data || typeof data !== "object") {
+    return jsonOutput_({ ok: false, error: "INVALID_DATA" });
+  }
+
+  importAllData_(data);
+  var newRev = currentRev + 1;
+  setSyncRev_(newRev);
+  appendHistory_(userEmail, "export", newRev, data);
+  return jsonOutput_({ ok: true, rev: newRev });
+}
+
+function listUsers(token) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "users.manage");
+  var meta = getUsersMeta();
+  var map = meta.map;
+  var data = meta.sheet.getDataRange().getValues();
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    var row = data[i];
+    out.push({
+      username: row[map.Username] || "",
+      email: typeof map.Email !== "undefined" ? (row[map.Email] || "") : "",
+      role: normalizeRole_(row[map.Role] || ""),
+      active: isActiveFlag(row[map.Active]),
+      displayName: row[map.DisplayName] || ""
+    });
+  }
+  return out;
+}
+
+function saveUser(token, user) {
+  var current = requireAuth(token);
+  assertCan_(current.role, "users.manage");
+  var u = user && typeof user === "object" ? user : {};
+  var lookup = String(u.lookup || "").trim().toLowerCase();
+  var email = String(u.email || "").trim();
+  var username = String(u.username || "").trim();
+  var displayName = String(u.displayName || "").trim();
+  var role = normalizeRole_(u.role || "");
+  var active = (u.active === false || u.active === "0" || u.active === 0) ? "false" : "true";
+  var password = String(u.password || "");
+
+  if (!email && !username) return { ok: false, error: "EMAIL_REQUIRED" };
+  if (!username) username = email.split("@")[0];
+  if (!email) email = username;
+
+  var found = findUserRow(lookup || email || username);
+  if (!found && !password) return { ok: false, error: "PASSWORD_REQUIRED" };
+
+  var meta = getUsersMeta();
+  var map = meta.map;
+  var row;
+  var rowIndex;
+  if (found && found.row) {
+    row = found.row;
+    rowIndex = found.rowIndex;
+  } else {
+    row = new Array(meta.headers.length);
+    rowIndex = null;
+  }
+
+  row[map.Username] = username;
+  if (typeof map.Email !== "undefined") row[map.Email] = email;
+  row[map.DisplayName] = displayName || username;
+  row[map.Role] = role;
+  row[map.Active] = active;
+
+  if (password) {
+    var salt = makeSalt();
+    var hash = hashPassword(password, salt);
+    row[map.Password] = "";
+    row[map.PasswordHash] = hash;
+    row[map.Salt] = salt;
+  }
+
+  while (row.length < meta.headers.length) row.push("");
+
+  if (rowIndex) {
+    meta.sheet.getRange(rowIndex, 1, 1, meta.headers.length).setValues([row]);
+  } else {
+    meta.sheet.appendRow(row);
+  }
+
+  return { ok: true };
+}
+
+function importAllData_(data) {
+  var d = data || {};
+  writeClients_(d.clients || []);
+  writeQuotes_(d.quotes || []);
+  writeInvoices_(d.invoices || []);
+  writeDeliveries_(d.deliveries || []);
+}
+
+function writeSheet_(sheetName, headers, rows) {
+  var sheet = getOrCreateSheet(sheetName, headers);
+  sheet.clearContents();
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (rows && rows.length) {
+    sheet.getRange(2, 1, rows.length, headers.length).setValues(rows);
+  }
+}
+
+function writeClients_(clients) {
+  var headers = ['ID', 'Name', 'Contact', 'Address', 'Phone', 'NIF', 'STAT'];
+  var rows = (clients || []).map(function(c){
+    return [
+      c.id || '',
+      c.name || '',
+      c.contact || '',
+      c.address || '',
+      c.phone || '',
+      c.nif || '',
+      c.stat || ''
+    ];
+  });
+  writeSheet_('Clients', headers, rows);
+}
+
+function writeQuotes_(quotes) {
+  var headers = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'Items', 'Notes', 'Totals', 'ConvertedTo', 'Acompte', 'DiscountRate'];
+  var rows = (quotes || []).map(function(q){
+    return [
+      q.id || '',
+      q.number || '',
+      q.clientId || '',
+      q.date || '',
+      q.status || '',
+      JSON.stringify(q.items || []),
+      q.notes || '',
+      JSON.stringify(q.totals || {}),
+      JSON.stringify(q.convertedTo || {}),
+      q.acompte || 0,
+      q.discountRate || 0
+    ];
+  });
+  writeSheet_('Quotes', headers, rows);
+}
+
+function writeInvoices_(invoices) {
+  var headers = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate'];
+  var rows = (invoices || []).map(function(inv){
+    return [
+      inv.id || '',
+      inv.number || '',
+      inv.clientId || '',
+      inv.date || '',
+      inv.status || '',
+      inv.sourceQuoteId || '',
+      JSON.stringify(inv.items || []),
+      inv.notes || '',
+      JSON.stringify(inv.totals || {}),
+      inv.acompte || 0,
+      inv.discountRate || 0
+    ];
+  });
+  writeSheet_('Invoices', headers, rows);
+}
+
+function writeDeliveries_(deliveries) {
+  var headers = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'SourceInvoiceID'];
+  var rows = (deliveries || []).map(function(d){
+    return [
+      d.id || '',
+      d.number || '',
+      d.clientId || '',
+      d.date || '',
+      d.status || '',
+      d.sourceQuoteId || '',
+      JSON.stringify(d.items || []),
+      d.notes || '',
+      d.sourceInvoiceId || ''
+    ];
+  });
+  writeSheet_('Deliveries', headers, rows);
+}
+
+// ---------------------------
+// Data API
+// ---------------------------
+function getAllDataInternal() {
+  try {
+    return {
+      clients: getClientsInternal(),
+      quotes: getQuotesInternal(),
+      invoices: getInvoicesInternal(),
+      deliveries: getDeliveriesInternal()
+    };
+  } catch (e) {
+    return {
+      clients: [],
+      quotes: [],
+      invoices: [],
+      deliveries: [],
+      error: String(e && e.message ? e.message : e)
+    };
+  }
+}
+
+function getAllDataText(token) {
+  var user = requireAuth(token);
+  var data = sanitizeDataForRole_(user.role, getAllDataInternal());
+  return JSON.stringify(data);
+}
+
+// ---------------------------
+// Company info (shared)
+// ---------------------------
+var COMPANY_HEADERS = ['Name', 'Address', 'Phone', 'Email', 'NIF', 'STAT', 'LogoDataUrl', 'BankName', 'BankAccount', 'BankIban', 'BankBic', 'PaymentTerms', 'ResponsibleName', 'ReferenceLabel', 'ReferenceValue', 'PurchaseOrderLabel', 'PurchaseOrderValue'];
+
+function getCompanySheet() {
+  return getOrCreateSheet('Company', COMPANY_HEADERS);
+}
+
+function normalizeCompanyInfo(info) {
+  info = info && typeof info === 'object' ? info : {};
+  return {
+    name: String(info.name || ''),
+    address: String(info.address || ''),
+    phone: String(info.phone || ''),
+    email: String(info.email || ''),
+    nif: String(info.nif || ''),
+    stat: String(info.stat || ''),
+    logoDataUrl: String(info.logoDataUrl || ''),
+    bankName: String(info.bankName || ''),
+    bankAccount: String(info.bankAccount || ''),
+    bankIban: String(info.bankIban || ''),
+    bankBic: String(info.bankBic || ''),
+    paymentTerms: String(info.paymentTerms || ''),
+    responsibleName: String(info.responsibleName || ''),
+    referenceLabel: String(info.referenceLabel || ''),
+    referenceValue: String(info.referenceValue || ''),
+    purchaseOrderLabel: String(info.purchaseOrderLabel || ''),
+    purchaseOrderValue: String(info.purchaseOrderValue || '')
+  };
+}
+
+function getCompanyInfoInternal() {
+  var sheet = getCompanySheet();
+  var data = sheet.getDataRange().getValues();
+  if (data.length < 2) {
+    return null;
+  }
+  var row = data[1];
+  return {
+    name: row[0] || '',
+    address: row[1] || '',
+    phone: row[2] || '',
+    email: row[3] || '',
+    nif: row[4] || '',
+    stat: row[5] || '',
+    logoDataUrl: row[6] || '',
+    bankName: row[7] || '',
+    bankAccount: row[8] || '',
+    bankIban: row[9] || '',
+    bankBic: row[10] || '',
+    paymentTerms: row[11] || '',
+    responsibleName: row[12] || '',
+    referenceLabel: row[13] || '',
+    referenceValue: row[14] || '',
+    purchaseOrderLabel: row[15] || '',
+    purchaseOrderValue: row[16] || ''
+  };
+}
+
+function saveCompanyInfoInternal(info) {
+  var sheet = getCompanySheet();
+  var clean = normalizeCompanyInfo(info);
+  var row = [
+    clean.name,
+    clean.address,
+    clean.phone,
+    clean.email,
+    clean.nif,
+    clean.stat,
+    clean.logoDataUrl,
+    clean.bankName,
+    clean.bankAccount,
+    clean.bankIban,
+    clean.bankBic,
+    clean.paymentTerms,
+    clean.responsibleName,
+    clean.referenceLabel,
+    clean.referenceValue,
+    clean.purchaseOrderLabel,
+    clean.purchaseOrderValue
+  ];
+  if (sheet.getLastRow() < 2) {
+    sheet.appendRow(row);
+  } else {
+    sheet.getRange(2, 1, 1, row.length).setValues([row]);
+  }
+  return clean;
+}
+
+function getCompanyInfo(token) {
+  requireAuth(token);
+  return getCompanyInfoInternal();
+}
+
+function saveCompanyInfo(token, info) {
+  requireAuth(token);
+  return saveCompanyInfoInternal(info);
+}
+
+
+function getClientsInternal() {
+  var sheet = getOrCreateSheet('Clients', ['ID', 'Name', 'Contact', 'Address', 'Phone', 'NIF', 'STAT']);
+  var headers = ensureClientHeaders(sheet);
+  var map = headerMap(headers);
+  var data = sheet.getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][map.ID] || "",
+      name: data[i][map.Name] || "",
+      contact: data[i][map.Contact] || "",
+      address: data[i][map.Address] || "",
+      phone: data[i][map.Phone] || "",
+      nif: data[i][map.NIF] || "",
+      stat: data[i][map.STAT] || ""
+    });
+  }
+  return list;
+}
+
+function getQuotesInternal() {
+  var sheet = getOrCreateSheet('Quotes', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'Items', 'Notes', 'Totals', 'ConvertedTo', 'Acompte', 'DiscountRate']);
+  var data = sheet.getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][0],
+      number: data[i][1],
+      clientId: data[i][2],
+      date: data[i][3],
+      status: data[i][4],
+      items: safeJsonParse(data[i][5], []),
+      notes: data[i][6],
+      totals: safeJsonParse(data[i][7], {}),
+      convertedTo: safeJsonParse(data[i][8], {}),
+      acompte: data[i][9],
+      discountRate: data[i][10]
+    });
+  }
+  return list;
+}
+
+function getInvoicesInternal() {
+  var sheet = getOrCreateSheet('Invoices', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate']);
+  var data = sheet.getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][0],
+      number: data[i][1],
+      clientId: data[i][2],
+      date: data[i][3],
+      status: data[i][4],
+      sourceQuoteId: data[i][5],
+      items: safeJsonParse(data[i][6], []),
+      notes: data[i][7],
+      totals: safeJsonParse(data[i][8], {}),
+      acompte: data[i][9],
+      discountRate: data[i][10]
+    });
+  }
+  return list;
+}
+
+function getDeliveriesInternal() {
+  var sheet = getOrCreateSheet('Deliveries', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes']);
+  var headers = ensureDeliveryHeaders(sheet);
+  var map = headerMap(headers);
+  var data = sheet.getDataRange().getValues();
+  var list = [];
+  for (var i = 1; i < data.length; i++) {
+    list.push({
+      id: data[i][map.ID] || "",
+      number: data[i][map.Number] || "",
+      clientId: data[i][map.ClientID] || "",
+      date: data[i][map.Date] || "",
+      status: data[i][map.Status] || "",
+      sourceQuoteId: data[i][map.SourceQuoteID] || "",
+      sourceInvoiceId: typeof map.SourceInvoiceID !== "undefined" ? (data[i][map.SourceInvoiceID] || "") : "",
+      items: safeJsonParse(data[i][map.Items], []),
+      notes: data[i][map.Notes] || ""
+    });
+  }
+  return list;
+}
+
+function getOrCreateSheet(name, headers) {
+  var ss = getSpreadsheet();
+  if (!ss) {
+    throw new Error("Aucun classeur actif. Liez le script à un Google Sheets ou configurez un ID.");
+  }
+  var sheet = ss.getSheetByName(name);
+  if (!sheet) {
+    sheet = ss.insertSheet(name);
+    sheet.appendRow(headers);
+  }
+  return sheet;
+}
+
+function getSpreadsheet() {
+  if (SPREADSHEET_ID) {
+    return SpreadsheetApp.openById(SPREADSHEET_ID);
+  }
+  var propId = PropertiesService.getScriptProperties().getProperty('SPREADSHEET_ID');
+  if (propId) {
+    return SpreadsheetApp.openById(propId);
+  }
+  return SpreadsheetApp.getActiveSpreadsheet();
+}
+
+function healthCheck() {
+  try {
+    var ss = getSpreadsheet();
+    return {
+      ok: true,
+      id: ss ? ss.getId() : "",
+      name: ss ? ss.getName() : "",
+      sheets: ss ? ss.getSheets().length : 0
+    };
+  } catch (e) {
+    return { ok: false, error: String(e && e.message ? e.message : e) };
+  }
+}
+
+function saveClientInternal(client) {
+  var sheet = getOrCreateSheet('Clients', ['ID', 'Name', 'Contact', 'Address', 'Phone', 'NIF', 'STAT']);
+  var headers = ensureClientHeaders(sheet);
+  var map = headerMap(headers);
+  if (!client.id) client.id = 'CL-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][map.ID] === client.id) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  var row = [];
+  row[map.ID] = client.id;
+  row[map.Name] = client.name;
+  row[map.Contact] = client.contact;
+  row[map.Address] = client.address;
+  row[map.Phone] = client.phone;
+  row[map.NIF] = client.nif;
+  row[map.STAT] = client.stat;
+  while (row.length < headers.length) row.push('');
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  return client;
+}
+
+function saveQuoteInternal(quote) {
+  var sheet = getOrCreateSheet('Quotes', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'Items', 'Notes', 'Totals', 'ConvertedTo', 'Acompte', 'DiscountRate']);
+  if (!quote.id) quote.id = 'Q-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  if (!quote.number) quote.number = generateNextNumber(sheet, 'DV');
+  quote.discountRate = toNumber(quote.discountRate || 0);
+  quote.totals = computeTotalsServer(quote.items || [], quote.discountRate);
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === quote.id) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  var row = [
+    quote.id, quote.number, quote.clientId, quote.date, quote.status,
+    JSON.stringify(quote.items || []), quote.notes, JSON.stringify(quote.totals || {}),
+    JSON.stringify(quote.convertedTo || {}), quote.acompte || 0, quote.discountRate || 0
+  ];
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  return quote;
+}
+
+function saveInvoiceInternal(invoice) {
+  var sheet = getOrCreateSheet('Invoices', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate']);
+  if (!invoice.id) invoice.id = 'INV-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  if (!invoice.number) invoice.number = generateNextNumber(sheet, 'FA');
+  invoice.discountRate = toNumber(invoice.discountRate || 0);
+  invoice.totals = computeTotalsServer(invoice.items || [], invoice.discountRate);
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === invoice.id) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  var row = [
+    invoice.id, invoice.number, invoice.clientId, invoice.date, invoice.status, invoice.sourceQuoteId || '',
+    JSON.stringify(invoice.items || []), invoice.notes, JSON.stringify(invoice.totals || {}),
+    invoice.acompte || 0, invoice.discountRate || 0
+  ];
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  return invoice;
+}
+
+function saveDeliveryInternal(delivery) {
+  var sheet = getOrCreateSheet('Deliveries', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes']);
+  var headers = ensureDeliveryHeaders(sheet);
+  var map = headerMap(headers);
+  if (!delivery.id) delivery.id = 'BL-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  if (!delivery.number) delivery.number = generateNextNumber(sheet, 'BL');
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][map.ID] === delivery.id) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  var row = new Array(headers.length);
+  row[map.ID] = delivery.id;
+  row[map.Number] = delivery.number;
+  row[map.ClientID] = delivery.clientId;
+  row[map.Date] = delivery.date;
+  row[map.Status] = delivery.status;
+  row[map.SourceQuoteID] = delivery.sourceQuoteId || '';
+  if (typeof map.SourceInvoiceID !== "undefined") {
+    row[map.SourceInvoiceID] = delivery.sourceInvoiceId || '';
+  }
+  row[map.Items] = JSON.stringify(delivery.items || []);
+  row[map.Notes] = delivery.notes;
+
+  if (rowIndex > 0) {
+    sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
+  } else {
+    sheet.appendRow(row);
+  }
+  return delivery;
+}
+
+function saveClient(token, client) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "clients.write");
+  return saveClientInternal(client);
+}
+
+function saveQuote(token, quote) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "quotes.write");
+  return saveQuoteInternal(quote);
+}
+
+function saveInvoice(token, invoice) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "invoices.write");
+  var status = String(invoice && invoice.status ? invoice.status : "").toLowerCase();
+  if (status === "paid" && !can_(user.role, "invoices.status.update")) {
+    throw new Error("FORBIDDEN");
+  }
+  return saveInvoiceInternal(invoice);
+}
+
+function saveDelivery(token, delivery) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "deliveries.write");
+  return saveDeliveryInternal(delivery);
+}
+
+function deleteClient(token, id) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "clients.delete");
+  deleteFromSheetInternal('Clients', id);
+}
+
+function deleteQuote(token, id) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "quotes.delete");
+  deleteFromSheetInternal('Quotes', id);
+}
+
+function deleteInvoice(token, id) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "invoices.delete");
+  deleteFromSheetInternal('Invoices', id);
+}
+
+function deleteDelivery(token, id) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "deliveries.delete");
+  deleteFromSheetInternal('Deliveries', id);
+}
+
+function deleteFromSheetInternal(sheetName, id) {
+  var ss = getSpreadsheet();
+  if (!ss) return;
+  var sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return;
+  var data = sheet.getDataRange().getValues();
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0] === id) {
+      rowIndex = i + 1;
+      break;
+    }
+  }
+  if (rowIndex > 0) sheet.deleteRow(rowIndex);
+}
+
+function convertQuoteToInvoice(token, quoteId) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "quotes.write");
+  assertCan_(user.role, "invoices.write");
+  var quotes = getQuotesInternal();
+  var quote = quotes.find(function(q) { return q.id === quoteId; });
+  if (!quote) throw 'Devis introuvable.';
+  if (quote.status === 'converted') throw 'Ce devis est déjà converti en facture.';
+  var invoice = {
+    id: null,
+    number: null,
+    clientId: quote.clientId,
+    date: new Date().toISOString().slice(0, 10),
+    status: 'pending',
+    sourceQuoteId: quoteId,
+    items: quote.items,
+    notes: quote.notes,
+    totals: computeTotalsServer(quote.items || [], quote.discountRate || 0),
+    acompte: quote.acompte,
+    discountRate: quote.discountRate
+  };
+  invoice = saveInvoiceInternal(invoice);
+  quote.status = 'converted';
+  quote.convertedTo = quote.convertedTo || {};
+  quote.convertedTo.invoiceId = invoice.id;
+  saveQuoteInternal(quote);
+  return invoice;
+}
+
+function convertQuoteToDelivery(token, quoteId) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "deliveries.write");
+  throw 'Veuillez déjà convertir le devis en facture.';
+}
+
+function convertInvoiceToDelivery(token, invoiceId) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "deliveries.write");
+  var invoices = getInvoicesInternal();
+  var invoice = invoices.find(function(i) { return i.id === invoiceId; });
+  if (!invoice) throw 'Facture introuvable.';
+  var delivery = {
+    id: null,
+    number: null,
+    clientId: invoice.clientId,
+    date: new Date().toISOString().slice(0, 10),
+    status: 'draft',
+    sourceQuoteId: invoice.sourceQuoteId || '',
+    sourceInvoiceId: invoiceId,
+    items: invoice.items,
+    notes: invoice.notes
+  };
+  delivery = saveDeliveryInternal(delivery);
+  return delivery;
+}
+
+function generateNextNumber(sheet, prefix) {
+  var year = new Date().getFullYear();
+  var data = sheet.getDataRange().getValues();
+  var max = 0;
+  for (var i = 1; i < data.length; i++) {
+    var num = data[i][1];
+    if (typeof num === 'string' && num.startsWith(prefix + '-' + year + '-')) {
+      var seq = parseInt(num.split('-')[2], 10);
+      if (!isNaN(seq) && seq > max) max = seq;
+    }
+  }
+  return prefix + '-' + year + '-' + (max + 1).toString().padStart(4, '0');
+}
+
+function ensureClientHeaders(sheet) {
+  var required = ['ID', 'Name', 'Contact', 'Address', 'Phone', 'NIF', 'STAT'];
+  var data = sheet.getDataRange().getValues();
+  if (data.length === 0) {
+    sheet.getRange(1, 1, 1, required.length).setValues([required]);
+    return required;
+  }
+  var headers = data[0];
+  var map = headerMap(headers);
+  var hasAddress = typeof map.Address !== "undefined";
+  if (!hasAddress) {
+    var rows = [];
+    for (var i = 1; i < data.length; i++) {
+      var row = data[i];
+      rows.push([
+        row[map.ID] || row[0] || '',
+        row[map.Name] || row[1] || '',
+        row[map.Contact] || row[2] || '',
+        '',
+        row[map.Phone] || row[3] || '',
+        row[map.NIF] || row[4] || '',
+        row[map.STAT] || row[5] || ''
+      ]);
+    }
+    writeSheet_('Clients', required, rows);
+    return required;
+  }
+  if (headers.length < required.length) {
+    while (headers.length < required.length) headers.push('');
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return headers;
+}
+
+function ensureDeliveryHeaders(sheet) {
+  var required = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'SourceInvoiceID'];
+  var lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    sheet.appendRow(required);
+    return required;
+  }
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var changed = false;
+  for (var i = 0; i < required.length; i++) {
+    var h = required[i];
+    if (headers.indexOf(h) === -1) {
+      headers.push(h);
+      changed = true;
+    }
+  }
+  if (changed) {
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return headers;
+}
+
+function headerMap(headers) {
+  var map = {};
+  for (var i = 0; i < headers.length; i++) {
+    map[headers[i]] = i;
+  }
+  return map;
+}
+
+function toNumber(value) {
+  if (value === null || typeof value === 'undefined') return 0;
+  if (typeof value === 'number') return isFinite(value) ? value : 0;
+  var s = String(value).trim();
+  if (!s) return 0;
+  s = s.replace(/[\s\u00A0\u202F]/g, '');
+  s = s.replace(/[^\d,.\-]/g, '');
+  if (s.indexOf(',') !== -1 && s.indexOf('.') === -1) {
+    s = s.replace(',', '.');
+  }
+  var n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+function computeTotalsServer(items, discountRate) {
+  var subTotal = 0;
+  for (var i = 0; i < (items || []).length; i++) {
+    var it = items[i] || {};
+    var qty = Math.max(0, toNumber(it.qty || 0));
+    var unitPrice = Math.max(0, toNumber(it.unitPrice || 0));
+    subTotal += qty * unitPrice;
+  }
+  var headerDiscount = Math.min(Math.max(toNumber(discountRate || 0), 0), 100);
+  var afterDiscount = subTotal * (1 - headerDiscount / 100);
+  return {
+    subTotal: Math.round(subTotal),
+    taxTotal: 0,
+    totalTTC: Math.round(afterDiscount)
+  };
+}
+
+function safeJsonParse(value, fallback) {
+  if (value === null || typeof value === 'undefined' || value === '') return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+// ---------------------------
+// UI: Menu + Sidebar (Mon Interface)
+// ---------------------------
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu("Mon Interface")
+    .addItem("Ouvrir l'interface", "showInterface")
+    .addToUi();
+}
+
+function showInterface() {
+  var html = HtmlService.createHtmlOutputFromFile("Interface")
+    .setTitle("Mon Interface")
+    .setWidth(320);
+  SpreadsheetApp.getUi().showSidebar(html);
+}
+
+/**
+ * Cette fonction permet d'enregistrer la signature dans une feuille "Settings"
+ */
+function saveCompanySettings(token, companyData) {
+  const user = requireAuth(token);
+  if (user.role !== 'admin') throw new Error("Accès refusé");
+  
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  let sheet = ss.getSheetByName("Settings");
+  if (!sheet) {
+    sheet = ss.insertSheet("Settings");
+    sheet.appendRow(["Clé", "Valeur"]);
+  }
+  
+  const configString = JSON.stringify(companyData);
+  const data = sheet.getDataRange().getValues();
+  let foundIndex = -1;
+  for (let i = 0; i < data.length; i++) {
+    if (data[i][0] === "COMPANY_CONFIG") {
+      foundIndex = i + 1;
+      break;
+    }
+  }
+  
+  if (foundIndex > -1) {
+    sheet.getRange(foundIndex, 2).setValue(configString);
+  } else {
+    sheet.appendRow(["COMPANY_CONFIG", configString]);
+  }
+  return { success: true };
+}
+
+// [ADD START: Company Signature]
+function getCompanySignature(token) {
+  requireAuth(token);
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName("Settings");
+  if (!sheet) return null;
+  var data = sheet.getDataRange().getValues();
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === "COMPANY_SIGNATURE_PNG") {
+      var val = String(data[i][1] || "").trim();
+      if (!val) return null;
+      return { signatureDataUrl: val };
+    }
+  }
+  return null;
+}
+
+function setCompanySignature(token, signatureDataUrl) {
+  var user = requireAuth(token);
+  assertCan_(user.role, "settings.write");
+
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName("Settings");
+  if (!sheet) {
+    sheet = ss.insertSheet("Settings");
+    sheet.appendRow(["Clé", "Valeur"]);
+  }
+
+  var data = sheet.getDataRange().getValues();
+  var targetRow = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][0]) === "COMPANY_SIGNATURE_PNG") {
+      targetRow = i + 1;
+      break;
+    }
+  }
+
+  var clean = signatureDataUrl && String(signatureDataUrl).trim() ? String(signatureDataUrl).trim() : "";
+  if (targetRow === -1) {
+    sheet.appendRow(["COMPANY_SIGNATURE_PNG", clean]);
+  } else {
+    sheet.getRange(targetRow, 2).setValue(clean);
+  }
+  return clean ? { signatureDataUrl: clean } : { signatureDataUrl: null };
+}
+// [ADD END: Company Signature]
+
+// ==========================================
+// EXTENSION : VENTE RAPIDE & POS
+// ==========================================
+function getSalesSheet() {
+  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var sheet = ss.getSheetByName("Ventes_Rapides");
+  if (!sheet) {
+    sheet = ss.insertSheet("Ventes_Rapides");
+    sheet.appendRow(['Date', 'ID Client', 'Nom Client', 'Contact', 'Lieu', 'Détails', 'Total (MGA)', 'Avance', 'Reste']);
+    sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f3f3f3");
+  }
+  return sheet;
+}
+function saveQuickSale(token, saleData) {
+  requireAuth(token);
+  var sheet = getSalesSheet();
+  sheet.appendRow([
+    new Date(),
+    saleData.clientId,
+    saleData.clientName,
+    saleData.contact,
+    saleData.lieu,
+    saleData.items,
+    saleData.total,
+    saleData.avance,
+    saleData.reste
+  ]);
+  return { success: true };
+}
+function getQuickSalesStats(token) {
+  requireAuth(token);
+  var sheet = getSalesSheet();
+  var data = sheet.getDataRange().getValues();
+  var stats = { totalVendu: 0, totalAvance: 0, totalReste: 0, count: 0, countRecouvrement: 0 };
+  var now = new Date();
+  var thisMonth = now.getMonth();
+  var thisYear = now.getFullYear();
+
+  for (var i = 1; i < data.length; i++) {
+    var rowDate = new Date(data[i][0]);
+    var isSameMonth = rowDate.getMonth() === thisMonth && rowDate.getFullYear() === thisYear;
+    var reste = Number(data[i][8] || 0);
+    if (isSameMonth) {
+      stats.totalVendu += Number(data[i][6] || 0);
+      stats.totalAvance += Number(data[i][7] || 0);
+      stats.totalReste += reste;
+      stats.count++;
+    }
+    if (reste > 0) stats.countRecouvrement++;
+  }
+  return stats;
+}
+function getQuickSalesList(token) {
+  requireAuth(token);
+  var sheet = getSalesSheet();
+  var data = sheet.getDataRange().getValues();
+  var list = [];
+  var now = new Date();
+  var thisMonth = now.getMonth();
+  var thisYear = now.getFullYear();
+  for (var i = 1; i < data.length; i++) {
+    var rowDate = new Date(data[i][0]);
+    var isSameMonth = rowDate.getMonth() === thisMonth && rowDate.getFullYear() === thisYear;
+    if (isSameMonth) {
+      list.push({
+        rowIndex: i + 1,
+        date: data[i][0],
+        clientId: data[i][1],
+        clientName: data[i][2],
+        contact: data[i][3],
+        lieu: data[i][4],
+        items: data[i][5],
+        total: Number(data[i][6] || 0),
+        avance: Number(data[i][7] || 0),
+        reste: Number(data[i][8] || 0)
+      });
+    }
+  }
+  return list;
+}
+function validatePayment(token, rowIndex, montant) {
+  requireAuth(token);
+  var sheet = getSalesSheet();
+  var data = sheet.getDataRange().getValues();
+  var i = rowIndex - 1; // 0-based
+  if (i < 1 || i >= data.length) throw new Error("Ligne introuvable");
+  var resteActuel = Number(data[i][8] || 0);
+  var avanceActuel = Number(data[i][7] || 0);
+  var paiement = Math.min(Number(montant || 0), resteActuel);
+  var nouveauAvance = avanceActuel + paiement;
+  var nouveauReste = Math.max(0, resteActuel - paiement);
+  sheet.getRange(rowIndex, 8).setValue(nouveauAvance);
+  sheet.getRange(rowIndex, 9).setValue(nouveauReste);
+  return { success: true, nouveauReste: nouveauReste };
 }
