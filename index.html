@@ -1,0 +1,1205 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#1a4a3a">
+<meta name="description" content="FOREVER MG — CRM Suivi Commercial">
+<link rel="manifest" href="manifest.json">
+<title>FOREVER MG CRM</title>
+<style>
+/* ── TOKENS ── */
+:root{
+  --green:#1a4a3a;--green-light:#2d7a5f;--green-pale:#e8f4ef;
+  --orange:#e8834a;--orange-light:#f0a070;--orange-pale:#fdf0e8;
+  --red:#c0392b;--red-pale:#fdf0f0;
+  --amber:#b07d1a;--amber-pale:#fdf8ec;
+  --blue:#1a6a9a;--blue-pale:#e8f4fc;
+  --gray:#f4f4f2;--gray-mid:#e0e0dc;--gray-dark:#888;
+  --text:#1a1a18;--text-2:#555;--text-3:#999;
+  --radius:10px;--radius-sm:6px;--radius-lg:14px;
+  --shadow:0 1px 4px rgba(0,0,0,.08);
+  --font:'DM Sans',system-ui,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font);background:#f0f0ec;color:var(--text);min-height:100vh}
+button{cursor:pointer;font-family:inherit;border:none;outline:none}
+input,select,textarea{font-family:inherit;outline:none}
+
+/* ── LAYOUT ── */
+.app{display:flex;flex-direction:column;min-height:100vh}
+
+/* ── TOPBAR ── */
+.topbar{
+  background:var(--green);color:#fff;
+  display:flex;align-items:center;gap:12px;
+  padding:0 20px;height:56px;position:sticky;top:0;z-index:100;
+  box-shadow:0 2px 8px rgba(0,0,0,.2)
+}
+.topbar-logo{
+  font-size:18px;font-weight:700;letter-spacing:-.3px;
+  display:flex;align-items:center;gap:8px
+}
+.topbar-logo span{color:var(--orange)}
+.topbar-spacer{flex:1}
+.topbar-sync{
+  font-size:12px;opacity:.7;display:flex;align-items:center;gap:5px
+}
+.dot{width:7px;height:7px;border-radius:50%;background:#4caf50;display:inline-block}
+.dot.red{background:#e57373}
+
+/* ── NAV ── */
+.nav{
+  background:var(--green);display:flex;border-top:1px solid rgba(255,255,255,.1);
+  overflow-x:auto;
+}
+.nav-btn{
+  flex:1;min-width:70px;padding:10px 6px 8px;
+  display:flex;flex-direction:column;align-items:center;gap:3px;
+  color:rgba(255,255,255,.6);background:none;transition:.15s;font-size:10px;
+  border-bottom:2px solid transparent;white-space:nowrap
+}
+.nav-btn svg{width:20px;height:20px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.nav-btn.active{color:#fff;border-bottom-color:var(--orange)}
+.nav-btn:hover:not(.active){color:rgba(255,255,255,.85)}
+
+/* ── MAIN ── */
+.main{flex:1;padding:16px;max-width:960px;margin:0 auto;width:100%}
+
+/* ── SECTION ── */
+.section{display:none}
+.section.active{display:block}
+
+/* ── PAGE TITLE ── */
+.page-title{
+  font-size:20px;font-weight:600;color:var(--green);
+  margin-bottom:16px;display:flex;align-items:center;gap:8px
+}
+.page-title svg{width:22px;height:22px;stroke:var(--orange);fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+
+/* ── KPI GRID ── */
+.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}
+.kpi{
+  background:#fff;border-radius:var(--radius);padding:14px 16px;
+  border:1px solid var(--gray-mid);
+}
+.kpi-label{font-size:11px;color:var(--text-3);margin-bottom:4px;text-transform:uppercase;letter-spacing:.04em}
+.kpi-val{font-size:24px;font-weight:700;line-height:1}
+.kpi-val.red{color:var(--red)}
+.kpi-val.amber{color:var(--amber)}
+.kpi-val.green{color:#1a7a3a}
+.kpi-val.orange{color:var(--orange)}
+.kpi-sub{font-size:11px;color:var(--text-3);margin-top:4px}
+
+/* ── CARD ── */
+.card{
+  background:#fff;border-radius:var(--radius-lg);
+  border:1px solid var(--gray-mid);margin-bottom:14px;overflow:hidden
+}
+.card-head{
+  padding:12px 16px;border-bottom:1px solid var(--gray-mid);
+  display:flex;align-items:center;justify-content:space-between;gap:8px
+}
+.card-title{font-size:14px;font-weight:600;color:var(--green)}
+.card-body{padding:0}
+
+/* ── TABLE ── */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{
+  background:var(--gray);color:var(--text-2);font-weight:600;font-size:11px;
+  padding:9px 12px;text-align:left;white-space:nowrap;
+  border-bottom:1px solid var(--gray-mid)
+}
+td{
+  padding:10px 12px;border-bottom:1px solid var(--gray-mid);
+  vertical-align:middle;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px
+}
+tr:last-child td{border-bottom:none}
+tr:hover td{background:#fafaf8}
+
+/* ── BADGE ── */
+.badge{
+  display:inline-block;font-size:11px;font-weight:600;
+  padding:2px 8px;border-radius:99px;white-space:nowrap
+}
+.badge-red{background:var(--red-pale);color:var(--red)}
+.badge-amber{background:var(--amber-pale);color:var(--amber)}
+.badge-green{background:#e8f8ee;color:#1a7a3a}
+.badge-blue{background:var(--blue-pale);color:var(--blue)}
+.badge-gray{background:var(--gray);color:var(--text-2)}
+.badge-orange{background:var(--orange-pale);color:#b05020}
+
+/* ── BUTTONS ── */
+.btn{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:7px 14px;border-radius:var(--radius-sm);
+  font-size:13px;font-weight:500;transition:.15s
+}
+.btn-primary{background:var(--green);color:#fff}
+.btn-primary:hover{background:var(--green-light)}
+.btn-orange{background:var(--orange);color:#fff}
+.btn-orange:hover{background:var(--orange-light)}
+.btn-ghost{background:transparent;color:var(--text-2);border:1px solid var(--gray-mid)}
+.btn-ghost:hover{background:var(--gray)}
+.btn-sm{padding:4px 10px;font-size:12px}
+.btn-danger{background:var(--red-pale);color:var(--red);border:1px solid #f0c0bb}
+.btn-danger:hover{background:#f8e0de}
+
+/* ── FORM ── */
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-group.full{grid-column:1/-1}
+label{font-size:12px;font-weight:500;color:var(--text-2)}
+input,select,textarea{
+  padding:8px 10px;border:1px solid var(--gray-mid);
+  border-radius:var(--radius-sm);font-size:13px;color:var(--text);
+  background:#fff;transition:border .15s
+}
+input:focus,select:focus,textarea:focus{border-color:var(--green)}
+textarea{resize:vertical;min-height:70px}
+
+/* ── MODAL ── */
+.overlay{
+  position:fixed;inset:0;background:rgba(0,0,0,.45);
+  z-index:200;display:none;align-items:flex-end;justify-content:center
+}
+.overlay.open{display:flex}
+@media(min-width:640px){.overlay{align-items:center}}
+.modal{
+  background:#fff;border-radius:var(--radius-lg) var(--radius-lg) 0 0;
+  width:100%;max-width:560px;max-height:90vh;overflow-y:auto;
+  padding:20px;
+}
+@media(min-width:640px){.modal{border-radius:var(--radius-lg)}}
+.modal-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px}
+.modal-title{font-size:16px;font-weight:600;color:var(--green)}
+.modal-close{
+  background:var(--gray);border:none;border-radius:50%;
+  width:28px;height:28px;display:flex;align-items:center;justify-content:center;
+  font-size:16px;cursor:pointer;color:var(--text-2)
+}
+.modal-close:hover{background:var(--gray-mid)}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:12px;border-top:1px solid var(--gray-mid)}
+
+/* ── TOOLBAR ── */
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.toolbar select{font-size:12px;padding:6px 10px;border-radius:var(--radius-sm)}
+.search-wrap{flex:1;min-width:140px;position:relative}
+.search-wrap input{width:100%;padding-left:30px}
+.search-icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--text-3)}
+
+/* ── ALERT BARS ── */
+.alert{
+  display:flex;align-items:flex-start;gap:10px;
+  padding:10px 14px;border-radius:var(--radius);
+  margin-bottom:8px;border:1px solid
+}
+.alert-red{background:var(--red-pale);border-color:#f0c0bb}
+.alert-amber{background:var(--amber-pale);border-color:#e8d090}
+.alert-body{flex:1}
+.alert-title{font-size:13px;font-weight:600;color:var(--text)}
+.alert-sub{font-size:12px;color:var(--text-2);margin-top:2px}
+.alert-icon{font-size:18px;margin-top:1px}
+
+/* ── GMAIL LIST ── */
+.gmail-item{
+  padding:12px 16px;border-bottom:1px solid var(--gray-mid);
+  display:flex;flex-direction:column;gap:4px;cursor:pointer;transition:.1s
+}
+.gmail-item:last-child{border-bottom:none}
+.gmail-item:hover{background:#fafaf8}
+.gmail-item.unread{border-left:3px solid var(--orange)}
+.gmail-item.important{border-left:3px solid var(--red)}
+.gmail-from{font-size:13px;font-weight:600;color:var(--green)}
+.gmail-subject{font-size:13px;color:var(--text)}
+.gmail-snippet{font-size:12px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.gmail-date{font-size:11px;color:var(--text-3);align-self:flex-end}
+.gmail-meta{display:flex;justify-content:space-between;align-items:center}
+
+/* ── EMPTY STATE ── */
+.empty{
+  text-align:center;padding:48px 20px;color:var(--text-3)
+}
+.empty-icon{font-size:40px;margin-bottom:12px;opacity:.4}
+.empty-text{font-size:14px}
+
+/* ── TOAST ── */
+.toast{
+  position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+  background:var(--green);color:#fff;padding:10px 20px;
+  border-radius:99px;font-size:13px;font-weight:500;
+  z-index:300;opacity:0;transition:opacity .3s;pointer-events:none;
+  box-shadow:0 4px 12px rgba(0,0,0,.2)
+}
+.toast.show{opacity:1}
+
+/* ── LOADING ── */
+.spinner{
+  display:inline-block;width:18px;height:18px;
+  border:2px solid rgba(255,255,255,.3);border-top-color:#fff;
+  border-radius:50%;animation:spin .7s linear infinite
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── RELANCE URGENTE ── */
+.relance-row{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px;border-bottom:1px solid var(--gray-mid)
+}
+.relance-row:last-child{border-bottom:none}
+.relance-name{font-size:13px;font-weight:600;flex:1}
+.relance-detail{font-size:12px;color:var(--text-2)}
+
+@media(max-width:480px){
+  .form-grid{grid-template-columns:1fr}
+  .kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .form-group.full{grid-column:1}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<div class="topbar">
+  <div class="topbar-logo">
+    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    4EVER<span>MG</span>
+  </div>
+  <div class="topbar-spacer"></div>
+  <div class="topbar-sync" id="syncStatus">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">Chargement…</span>
+  </div>
+</div>
+
+<!-- NAV -->
+<nav class="nav">
+  <button class="nav-btn active" data-section="dashboard" onclick="switchSection('dashboard',this)">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Dashboard
+  </button>
+  <button class="nav-btn" data-section="devis" onclick="switchSection('devis',this)">
+    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+    Devis
+  </button>
+  <button class="nav-btn" data-section="po" onclick="switchSection('po',this)">
+    <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+    PO
+  </button>
+  <button class="nav-btn" data-section="gmail" onclick="switchSection('gmail',this)">
+    <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+    Gmail
+  </button>
+  <button class="nav-btn" data-section="email" onclick="switchSection('email',this)">
+    <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    Envoyer
+  </button>
+</nav>
+
+<!-- ═══════════ DASHBOARD ═══════════ -->
+<main class="main">
+<section class="section active" id="sec-dashboard">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+    Dashboard
+  </div>
+
+  <!-- KPIs -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi"><div class="kpi-label">Devis ouverts</div><div class="kpi-val orange" id="k-ouverts">—</div><div class="kpi-sub">Total actifs</div></div>
+    <div class="kpi"><div class="kpi-label">Urgents</div><div class="kpi-val red" id="k-urgents">—</div><div class="kpi-sub">À traiter maintenant</div></div>
+    <div class="kpi"><div class="kpi-label">PO en retard</div><div class="kpi-val red" id="k-poretard">—</div><div class="kpi-sub">Non acquittés</div></div>
+    <div class="kpi"><div class="kpi-label">PO à acquitter</div><div class="kpi-val amber" id="k-poacq">—</div><div class="kpi-sub">Action requise</div></div>
+    <div class="kpi"><div class="kpi-label">Montant devis</div><div class="kpi-val green" id="k-montant">—</div><div class="kpi-sub">Ar · en cours</div></div>
+    <div class="kpi"><div class="kpi-label">Montant PO</div><div class="kpi-val green" id="k-montantpo">—</div><div class="kpi-sub">Ar · actifs</div></div>
+  </div>
+
+  <!-- Relances urgentes -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">🔴 Relances à faire aujourd'hui</div>
+      <button class="btn btn-ghost btn-sm" onclick="loadDashboard()">Actualiser</button>
+    </div>
+    <div class="card-body" id="relancesList">
+      <div class="empty"><div class="empty-icon">✓</div><div class="empty-text">Aucune relance urgente</div></div>
+    </div>
+  </div>
+
+  <!-- Derniers devis -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Derniers devis</div>
+      <button class="btn btn-ghost btn-sm" onclick="switchSection('devis',document.querySelector('[data-section=devis]'))">Voir tout</button>
+    </div>
+    <div class="card-body tbl-wrap">
+      <table id="dashDevisTable">
+        <thead><tr><th>Client</th><th>Produit</th><th>Montant</th><th>Statut</th><th>Priorité</th></tr></thead>
+        <tbody id="dashDevisTbody"><tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Derniers PO -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">Derniers Purchase Orders</div>
+      <button class="btn btn-ghost btn-sm" onclick="switchSection('po',document.querySelector('[data-section=po]'))">Voir tout</button>
+    </div>
+    <div class="card-body tbl-wrap">
+      <table><thead><tr><th>N° PO</th><th>Client</th><th>Montant</th><th>Statut</th></tr></thead>
+      <tbody id="dashPOTbody"><tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ DEVIS ═══════════ -->
+<section class="section" id="sec-devis">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>
+    Suivi Devis
+  </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="search" id="devisSearch" placeholder="Rechercher client, produit…" oninput="filterDevis()">
+    </div>
+    <select id="devisStatutFilter" onchange="filterDevis()">
+      <option value="tous">Tous statuts</option>
+      <option value="Ouvert">Ouvert</option>
+      <option value="En cours">En cours</option>
+      <option value="Validé">Validé</option>
+      <option value="Perdu">Perdu</option>
+      <option value="Annulé">Annulé</option>
+    </select>
+    <select id="devisPrioFilter" onchange="filterDevis()">
+      <option value="tous">Toutes priorités</option>
+      <option value="Urgent">Urgent</option>
+      <option value="Haute">Haute</option>
+      <option value="Moyenne">Moyenne</option>
+      <option value="Basse">Basse</option>
+    </select>
+    <button class="btn btn-primary" onclick="openModal('devis')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nouveau devis
+    </button>
+  </div>
+  <div class="card">
+    <div class="card-body tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>ID</th><th>Date</th><th>Client</th><th>Produit / Service</th>
+            <th>Montant (Ar)</th><th>Statut</th><th>Priorité</th>
+            <th>Échéance</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="devisTbody">
+          <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ PO ═══════════ -->
+<section class="section" id="sec-po">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+    Purchase Orders
+  </div>
+  <div class="toolbar">
+    <select id="poStatutFilter" onchange="filterPO()">
+      <option value="tous">Tous statuts</option>
+      <option value="En retard">En retard</option>
+      <option value="À acquitter">À acquitter</option>
+      <option value="À facturer">À facturer</option>
+      <option value="Acquitté">Acquitté</option>
+      <option value="Facturé">Facturé</option>
+      <option value="Clôturé">Clôturé</option>
+    </select>
+    <button class="btn btn-primary" onclick="openModal('po')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nouveau PO
+    </button>
+  </div>
+  <div class="card">
+    <div class="card-body tbl-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>N° PO</th><th>Date</th><th>Client</th><th>Description</th>
+            <th>Montant (Ar)</th><th>Conditions</th><th>Statut</th>
+            <th>Facture</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="poTbody">
+          <tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ GMAIL ═══════════ -->
+<section class="section" id="sec-gmail">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+    Boîte mail commerciale
+  </div>
+  <div class="toolbar">
+    <button class="btn btn-primary" onclick="loadGmail()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+      Actualiser
+    </button>
+    <span style="font-size:12px;color:var(--text-3)" id="gmailInfo">Mots-clés : devis, demande, urgent, PO…</span>
+  </div>
+  <div class="card">
+    <div class="card-body" id="gmailList">
+      <div class="empty"><div class="empty-icon">📬</div><div class="empty-text">Cliquez sur Actualiser pour charger les e-mails</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══════════ ENVOYER E-MAIL ═══════════ -->
+<section class="section" id="sec-email">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+    Envoyer un e-mail
+  </div>
+  <div class="card">
+    <div class="card-body" style="padding:20px">
+      <div class="form-grid">
+        <div class="form-group full">
+          <label>À *</label>
+          <input type="email" id="emailTo" placeholder="client@example.com">
+        </div>
+        <div class="form-group">
+          <label>CC</label>
+          <input type="email" id="emailCc" placeholder="(optionnel)">
+        </div>
+        <div class="form-group">
+          <label>Répondre à</label>
+          <input type="email" id="emailReplyTo" placeholder="commercial4evermg@gmail.com">
+        </div>
+        <div class="form-group full">
+          <label>Objet *</label>
+          <input type="text" id="emailSubject" placeholder="Ex : Devis lampions — FOREVER MG">
+        </div>
+        <div class="form-group full">
+          <label>Corps du message *</label>
+          <textarea id="emailBody" rows="8" placeholder="Bonjour,&#10;&#10;Suite à votre demande…&#10;&#10;Cordialement,&#10;FOREVER MG"></textarea>
+        </div>
+      </div>
+
+      <!-- Templates rapides -->
+      <div style="margin-top:14px;margin-bottom:8px">
+        <div style="font-size:12px;font-weight:500;color:var(--text-2);margin-bottom:8px">Templates rapides :</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate('accuse')">Accusé réception</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate('devis')">Envoi devis</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate('relance')">Relance devis</button>
+          <button class="btn btn-ghost btn-sm" onclick="loadTemplate('confirmation')">Confirmation commande</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;margin-top:16px">
+        <button class="btn btn-primary" onclick="sendEmailNow()">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Envoyer
+        </button>
+        <button class="btn btn-ghost" onclick="saveDraft()">Sauvegarder brouillon</button>
+        <button class="btn btn-ghost" onclick="clearEmail()">Effacer</button>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ═══════════ MODAL NOUVEAU DEVIS ═══════════ -->
+<div class="overlay" id="modalDevis">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="devisModalTitle">Nouveau devis</div>
+    <button class="modal-close" onclick="closeModal('devis')">✕</button>
+  </div>
+  <input type="hidden" id="devisEditId">
+  <div class="form-grid">
+    <div class="form-group"><label>Client *</label><input id="d-client" placeholder="Nom du client"></div>
+    <div class="form-group"><label>E-mail client</label><input id="d-email" type="email" placeholder="client@example.mg"></div>
+    <div class="form-group"><label>Téléphone</label><input id="d-tel" placeholder="+261 …"></div>
+    <div class="form-group"><label>Date</label><input id="d-date" type="date"></div>
+    <div class="form-group full"><label>Produit / Service *</label><input id="d-produit" placeholder="Ex : Lampions personnalisés avec logo"></div>
+    <div class="form-group">
+      <label>Catégorie</label>
+      <select id="d-categorie">
+        <option>Demande devis</option><option>Modification</option>
+        <option>Validation client</option><option>Relance client</option>
+        <option>Réclamation</option><option>Problème paiement</option>
+        <option>Livraison</option><option>Production</option><option>Autre</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Montant (Ar)</label><input id="d-montant" type="number" placeholder="0"></div>
+    <div class="form-group">
+      <label>Statut</label>
+      <select id="d-statut">
+        <option>Ouvert</option><option>En cours</option>
+        <option>Validé</option><option>Perdu</option><option>Annulé</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Priorité</label>
+      <select id="d-priorite">
+        <option>Moyenne</option><option>Urgent</option>
+        <option>Haute</option><option>Basse</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Échéance</label><input id="d-echeance" type="date"></div>
+    <div class="form-group"><label>Responsable</label><input id="d-responsable" placeholder="Nom"></div>
+    <div class="form-group full"><label>Prochaine action</label><input id="d-action" placeholder="Ex : Envoyer devis avec photo modèle"></div>
+    <div class="form-group full"><label>Problème identifié</label><input id="d-probleme" placeholder="(optionnel)"></div>
+    <div class="form-group full"><label>Commentaire</label><textarea id="d-commentaire" rows="2" placeholder="Notes internes…"></textarea></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('devis')">Annuler</button>
+    <button class="btn btn-primary" onclick="saveDevis()" id="devisSaveBtn">Créer le devis</button>
+  </div>
+</div>
+</div>
+
+<!-- ═══════════ MODAL NOUVEAU PO ═══════════ -->
+<div class="overlay" id="modalPO">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="poModalTitle">Nouveau Purchase Order</div>
+    <button class="modal-close" onclick="closeModal('po')">✕</button>
+  </div>
+  <input type="hidden" id="poEditId">
+  <div class="form-grid">
+    <div class="form-group"><label>N° PO *</label><input id="po-numero" placeholder="Ex : 3480-140011"></div>
+    <div class="form-group"><label>Date réception</label><input id="po-date" type="date"></div>
+    <div class="form-group"><label>Client *</label><input id="po-client" placeholder="Ex : Foundever"></div>
+    <div class="form-group"><label>Contact</label><input id="po-contact" placeholder="Nom du contact"></div>
+    <div class="form-group full"><label>Description *</label><input id="po-desc" placeholder="Ex : 2 Ballons basket × 80 500 Ar"></div>
+    <div class="form-group"><label>Montant (Ar)</label><input id="po-montant" type="number" placeholder="0"></div>
+    <div class="form-group">
+      <label>Conditions paiement</label>
+      <select id="po-conditions">
+        <option>NET 30</option><option>NET 15</option>
+        <option>NET 45</option><option>À la livraison</option><option>Avance</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Statut</label>
+      <select id="po-statut">
+        <option>À acquitter</option><option>En retard</option>
+        <option>À facturer</option><option>Acquitté</option>
+        <option>Facturé</option><option>Clôturé</option>
+      </select>
+    </div>
+    <div class="form-group"><label>Échéance acquittement</label><input id="po-echeance" type="date"></div>
+    <div class="form-group"><label>Lien Coupa</label><input id="po-coupa" placeholder="https://…coupahost.com/…"></div>
+    <div class="form-group full"><label>Commentaire</label><textarea id="po-commentaire" rows="2" placeholder="Notes internes…"></textarea></div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('po')">Annuler</button>
+    <button class="btn btn-primary" onclick="savePO()" id="poSaveBtn">Créer le PO</button>
+  </div>
+</div>
+</div>
+
+<!-- TOAST -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ============================================================
+//  CONFIG — Remplacez par votre URL de déploiement GAS
+// ============================================================
+const GAS_URL = "VOTRE_URL_GAS_ICI"; // Ex: https://script.google.com/macros/s/xxxxx/exec
+
+// ============================================================
+//  STATE
+// ============================================================
+let STATE = {
+  devis: [],
+  po:    [],
+  gmail: [],
+  loading: false
+};
+
+// ============================================================
+//  API
+// ============================================================
+async function api(action, payload = {}) {
+  try {
+    const r = await fetch(GAS_URL, {
+      method: "POST",
+      headers: { "Content-Type": "text/plain" },
+      body: JSON.stringify({ action, ...payload })
+    });
+    return await r.json();
+  } catch(e) {
+    // Mode démo si GAS non configuré
+    return demoData(action, payload);
+  }
+}
+
+// ============================================================
+//  DEMO DATA (fonctionne sans GAS configuré)
+// ============================================================
+function demoData(action, payload) {
+  const devisDemo = [
+    { ID:"DEV-001", "Date":"05/06/2026","Client":"First Immo SA","Email Client":"volana.randrianomanana@firstimmo.mg","Téléphone":"+261 38 97 829 60","Catégorie":"Demande devis","Produit / Service":"Lampions avec logo (MM + GM)","Montant (Ar)":"","Statut":"Ouvert","Priorité":"Urgent","Échéance":"09/06/2026","Responsable":"","Problème identifié":"Demande URGENT non répondue 4j","Prochaine action":"Envoyer devis avec photo modèle","Commentaire":"Quantité à confirmer","Créé le":"05/06/2026 12:10","Modifié le":"05/06/2026 12:10"},
+    { ID:"DEV-002", "Date":"08/06/2026","Client":"Foundever","Email Client":"Hasinavalona.Rakotovelo@foundever.com","Téléphone":"+261 34 01 248 98","Catégorie":"Modification","Produit / Service":"Refacturation ×2 (outils + peinture)","Montant (Ar)":"","Statut":"Ouvert","Priorité":"Urgent","Échéance":"10/06/2026","Responsable":"","Problème identifié":"Devis à scinder en 2","Prochaine action":"Créer 2 devis séparés","Commentaire":"PDF joints dans l'e-mail","Créé le":"08/06/2026 13:11","Modifié le":"08/06/2026 13:11"},
+    { ID:"DEV-003", "Date":"01/06/2026","Client":"Ravinala Airports","Email Client":"fanasina.joelison@ravinala-airports.aero","Téléphone":"+261 34 79 683 71","Catégorie":"Demande devis","Produit / Service":"Claustra VIP + signalisation bois Toilette","Montant (Ar)":"","Statut":"En cours","Priorité":"Haute","Échéance":"11/06/2026","Responsable":"","Problème identifié":"Visite site à confirmer","Prochaine action":"Confirmer date visite + envoyer cotation","Commentaire":"Terminal National Ivato","Créé le":"01/06/2026 05:07","Modifié le":"01/06/2026 06:49"}
+  ];
+  const poDemo = [
+    { "ID PO":"PO-001","Numéro PO":"3480-140011","Date réception":"04/06/2026","Client":"Foundever","Contact":"Hasina RAKOTONDRAZANANY","Description":"2 Ballons basket × 80 500 Ar","Montant (Ar)":"161000","Conditions paiement":"NET 30","Statut":"À acquitter","Échéance acquittement":"10/06/2026","Lien Coupa":"https://foundever.coupahost.com/","Facture créée":"Non","Commentaire":"PO #3480-140011","Créé le":"04/06/2026"},
+    { "ID PO":"PO-002","Numéro PO":"3480-138813","Date réception":"27/05/2026","Client":"Foundever","Contact":"Hasina RAKOTONDRAZANANY","Description":"(À déterminer)","Montant (Ar)":"","Conditions paiement":"NET 30","Statut":"En retard","Échéance acquittement":"09/06/2026","Lien Coupa":"","Facture créée":"Non","Commentaire":"Reminder reçu le 27/05","Créé le":"27/05/2026"},
+    { "ID PO":"PO-003","Numéro PO":"3480-138812","Date réception":"27/05/2026","Client":"Foundever","Contact":"Hasina RAKOTONDRAZANANY","Description":"(À déterminer)","Montant (Ar)":"","Conditions paiement":"NET 30","Statut":"En retard","Échéance acquittement":"09/06/2026","Lien Coupa":"","Facture créée":"Non","Commentaire":"Reminder reçu le 27/05","Créé le":"27/05/2026"}
+  ];
+
+  switch(action) {
+    case "getDashboard": return { ok:true,
+      kpi:{ devis:{total:3,ouverts:2,urgents:2,enCours:1,valides:0,nonRepondus:2,montantOuverts:0},
+            po:{total:3,enRetard:2,aAcquitter:1,aFacturer:0,montantActifs:161000} },
+      relances: devisDemo.filter(d=>d["Priorité"]==="Urgent"),
+      recentDevis: devisDemo, recentPO: poDemo };
+    case "getDevis": return { ok:true, data: devisDemo };
+    case "getPO":    return { ok:true, data: poDemo };
+    case "createDevis": return { ok:true, id:"DEV-"+Date.now().toString(36).toUpperCase(), message:"Devis créé (mode démo)." };
+    case "updateDevis": return { ok:true, message:"Devis mis à jour (mode démo)." };
+    case "createPO":    return { ok:true, id:"PO-"+Date.now().toString(36).toUpperCase(), message:"PO créé (mode démo)." };
+    case "updatePO":    return { ok:true, message:"PO mis à jour (mode démo)." };
+    case "getGmailLeads": return { ok:false, error:"Gmail disponible une fois le GAS déployé." };
+    case "sendEmail":  return { ok:true, message:"E-mail envoyé (mode démo)." };
+    case "createDraft":return { ok:true, message:"Brouillon créé (mode démo)." };
+    default: return { ok:false, error:"Action inconnue." };
+  }
+}
+
+// ============================================================
+//  NAVIGATION
+// ============================================================
+function switchSection(id, btn) {
+  document.querySelectorAll(".section").forEach(s => s.classList.remove("active"));
+  document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+  document.getElementById("sec-" + id).classList.add("active");
+  if (btn) btn.classList.add("active");
+  // Charger les données à l'entrée de chaque section
+  if (id === "dashboard") loadDashboard();
+  if (id === "devis")     loadDevis();
+  if (id === "po")        loadPO();
+}
+
+// ============================================================
+//  DASHBOARD
+// ============================================================
+async function loadDashboard() {
+  setStatus("Chargement…", false);
+  const res = await api("getDashboard");
+  if (!res.ok) { setStatus("Erreur", true); return; }
+
+  const { kpi, relances, recentDevis, recentPO } = res;
+
+  // KPIs
+  document.getElementById("k-ouverts").textContent   = kpi.devis.ouverts;
+  document.getElementById("k-urgents").textContent   = kpi.devis.urgents;
+  document.getElementById("k-poretard").textContent  = kpi.po.enRetard;
+  document.getElementById("k-poacq").textContent     = kpi.po.aAcquitter;
+  document.getElementById("k-montant").textContent   = fmtAr(kpi.devis.montantOuverts);
+  document.getElementById("k-montantpo").textContent = fmtAr(kpi.po.montantActifs);
+
+  // Relances
+  const rl = document.getElementById("relancesList");
+  if (!relances || relances.length === 0) {
+    rl.innerHTML = `<div class="empty"><div class="empty-icon">✓</div><div class="empty-text">Aucune relance urgente — bien joué !</div></div>`;
+  } else {
+    rl.innerHTML = relances.map(r => `
+      <div class="relance-row">
+        <div>
+          <div class="relance-name">${esc(r["Client"] || r.Client || "")}</div>
+          <div class="relance-detail">${esc(r["Produit / Service"] || "")}</div>
+        </div>
+        <span class="badge badge-red">Urgent</span>
+        <button class="btn btn-ghost btn-sm" onclick="precomposeRelance('${esc(r["Client"]||"")}','${esc(r["Email Client"]||"")}','${esc(r["Produit / Service"]||"")}')">Relancer →</button>
+      </div>`).join("");
+  }
+
+  // Tableau devis récents
+  const dt = document.getElementById("dashDevisTbody");
+  dt.innerHTML = (recentDevis||[]).map(r => `
+    <tr>
+      <td title="${esc(r["Client"]||"")}">${esc(r["Client"]||"")}</td>
+      <td title="${esc(r["Produit / Service"]||"")}">${esc(r["Produit / Service"]||"")}</td>
+      <td>${r["Montant (Ar)"] ? fmtAr(r["Montant (Ar)"]) + " Ar" : "—"}</td>
+      <td>${badgeStatut(r["Statut"])}</td>
+      <td>${badgePrio(r["Priorité"])}</td>
+    </tr>`).join("") || `<tr><td colspan="5" style="text-align:center;color:var(--text-3);padding:24px">Aucun devis</td></tr>`;
+
+  // Tableau PO récents
+  const pt = document.getElementById("dashPOTbody");
+  pt.innerHTML = (recentPO||[]).map(r => `
+    <tr>
+      <td>${esc(r["Numéro PO"]||"")}</td>
+      <td>${esc(r["Client"]||"")}</td>
+      <td>${r["Montant (Ar)"] ? fmtAr(r["Montant (Ar)"]) + " Ar" : "—"}</td>
+      <td>${badgePO(r["Statut"])}</td>
+    </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px">Aucun PO</td></tr>`;
+
+  setStatus("Synchronisé", false);
+}
+
+// ============================================================
+//  DEVIS
+// ============================================================
+async function loadDevis() {
+  const res = await api("getDevis", {
+    statut:   document.getElementById("devisStatutFilter")?.value || "tous",
+    priorite: document.getElementById("devisPrioFilter")?.value   || "tous",
+    search:   document.getElementById("devisSearch")?.value       || ""
+  });
+  STATE.devis = res.data || [];
+  renderDevis(STATE.devis);
+}
+
+function filterDevis() { loadDevis(); }
+
+function renderDevis(rows) {
+  const tb = document.getElementById("devisTbody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px">Aucun devis trouvé</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => `
+    <tr>
+      <td><code style="font-size:11px;background:var(--gray);padding:2px 5px;border-radius:4px">${esc(r["ID"]||"")}</code></td>
+      <td>${esc(r["Date"]||"")}</td>
+      <td title="${esc(r["Client"]||"")}" style="font-weight:500">${esc(r["Client"]||"")}</td>
+      <td title="${esc(r["Produit / Service"]||"")}">${esc(r["Produit / Service"]||"")}</td>
+      <td style="text-align:right">${r["Montant (Ar)"] ? fmtAr(r["Montant (Ar)"])+" Ar" : "—"}</td>
+      <td>${badgeStatut(r["Statut"])}</td>
+      <td>${badgePrio(r["Priorité"])}</td>
+      <td>${esc(r["Échéance"]||"—")}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="editDevis('${esc(r["ID"]||"")}')">Éditer</button>
+          <button class="btn btn-ghost btn-sm" onclick="precomposeRelance('${esc(r["Client"]||"")}','${esc(r["Email Client"]||"")}','${esc(r["Produit / Service"]||"")}')">✉</button>
+          <button class="btn btn-ghost btn-sm" style="color:var(--red)" onclick="quickUpdateDevis('${esc(r["ID"]||"")}','Perdu')">✕</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+
+function openModal(type) {
+  if (type === "devis") {
+    document.getElementById("devisModalTitle").textContent = "Nouveau devis";
+    document.getElementById("devisSaveBtn").textContent    = "Créer le devis";
+    document.getElementById("devisEditId").value = "";
+    const today = new Date().toISOString().split("T")[0];
+    document.getElementById("d-date").value = today;
+    ["d-client","d-email","d-tel","d-produit","d-montant","d-responsable","d-action","d-probleme","d-commentaire"].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = "";
+    });
+    document.getElementById("d-statut").value    = "Ouvert";
+    document.getElementById("d-priorite").value  = "Moyenne";
+    document.getElementById("d-categorie").value = "Demande devis";
+    document.getElementById("d-echeance").value  = "";
+    document.getElementById("modalDevis").classList.add("open");
+  } else {
+    document.getElementById("poModalTitle").textContent = "Nouveau Purchase Order";
+    document.getElementById("poSaveBtn").textContent    = "Créer le PO";
+    document.getElementById("poEditId").value = "";
+    const today = new Date().toISOString().split("T")[0];
+    document.getElementById("po-date").value = today;
+    ["po-numero","po-client","po-contact","po-desc","po-montant","po-coupa","po-commentaire"].forEach(id => {
+      const el = document.getElementById(id); if (el) el.value = "";
+    });
+    document.getElementById("po-conditions").value = "NET 30";
+    document.getElementById("po-statut").value     = "À acquitter";
+    document.getElementById("po-echeance").value   = "";
+    document.getElementById("modalPO").classList.add("open");
+  }
+}
+
+function closeModal(type) {
+  document.getElementById(type === "devis" ? "modalDevis" : "modalPO").classList.remove("open");
+}
+
+function editDevis(id) {
+  const row = STATE.devis.find(r => r["ID"] === id);
+  if (!row) return;
+  document.getElementById("devisModalTitle").textContent = "Modifier le devis";
+  document.getElementById("devisSaveBtn").textContent    = "Enregistrer";
+  document.getElementById("devisEditId").value = id;
+  document.getElementById("d-client").value      = row["Client"] || "";
+  document.getElementById("d-email").value       = row["Email Client"] || "";
+  document.getElementById("d-tel").value         = row["Téléphone"] || "";
+  document.getElementById("d-produit").value     = row["Produit / Service"] || "";
+  document.getElementById("d-montant").value     = row["Montant (Ar)"] || "";
+  document.getElementById("d-statut").value      = row["Statut"] || "Ouvert";
+  document.getElementById("d-priorite").value    = row["Priorité"] || "Moyenne";
+  document.getElementById("d-categorie").value   = row["Catégorie"] || "Demande devis";
+  document.getElementById("d-responsable").value = row["Responsable"] || "";
+  document.getElementById("d-action").value      = row["Prochaine action"] || "";
+  document.getElementById("d-probleme").value    = row["Problème identifié"] || "";
+  document.getElementById("d-commentaire").value = row["Commentaire"] || "";
+  // Dates
+  const dateStr = row["Date"] || "";
+  document.getElementById("d-date").value = parseDate(dateStr);
+  const ech = row["Échéance"] || "";
+  document.getElementById("d-echeance").value = parseDate(ech);
+  document.getElementById("modalDevis").classList.add("open");
+}
+
+async function saveDevis() {
+  const id  = document.getElementById("devisEditId").value;
+  const btn = document.getElementById("devisSaveBtn");
+  const payload = {
+    client:      document.getElementById("d-client").value.trim(),
+    emailClient: document.getElementById("d-email").value.trim(),
+    telephone:   document.getElementById("d-tel").value.trim(),
+    produit:     document.getElementById("d-produit").value.trim(),
+    categorie:   document.getElementById("d-categorie").value,
+    montant:     document.getElementById("d-montant").value,
+    date:        document.getElementById("d-date").value,
+    statut:      document.getElementById("d-statut").value,
+    priorite:    document.getElementById("d-priorite").value,
+    echeance:    document.getElementById("d-echeance").value,
+    responsable: document.getElementById("d-responsable").value.trim(),
+    action:      document.getElementById("d-action").value.trim(),
+    probleme:    document.getElementById("d-probleme").value.trim(),
+    commentaire: document.getElementById("d-commentaire").value.trim()
+  };
+  if (!payload.client || !payload.produit) { showToast("Client et Produit obligatoires"); return; }
+  btn.innerHTML = `<span class="spinner"></span>`;
+  btn.disabled  = true;
+  const action  = id ? "updateDevis" : "createDevis";
+  if (id) payload.id = id;
+  const res = await api(action, payload);
+  btn.innerHTML = id ? "Enregistrer" : "Créer le devis";
+  btn.disabled  = false;
+  if (res.ok) { closeModal("devis"); showToast(res.message || "Sauvegardé"); loadDevis(); }
+  else showToast("Erreur : " + res.error);
+}
+
+async function quickUpdateDevis(id, statut) {
+  const res = await api("updateDevis", { id, statut });
+  if (res.ok) { showToast("Statut → " + statut); loadDevis(); loadDashboard(); }
+}
+
+// ============================================================
+//  PURCHASE ORDERS
+// ============================================================
+async function loadPO() {
+  const res = await api("getPO", { statut: document.getElementById("poStatutFilter")?.value || "tous" });
+  STATE.po = res.data || [];
+  renderPO(STATE.po);
+}
+
+function filterPO() { loadPO(); }
+
+function renderPO(rows) {
+  const tb = document.getElementById("poTbody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-3);padding:32px">Aucun PO trouvé</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map(r => `
+    <tr>
+      <td style="font-weight:600">${esc(r["Numéro PO"]||"")}</td>
+      <td>${esc(r["Date réception"]||"")}</td>
+      <td style="font-weight:500">${esc(r["Client"]||"")}</td>
+      <td title="${esc(r["Description"]||"")}">${esc(r["Description"]||"")}</td>
+      <td style="text-align:right">${r["Montant (Ar)"] ? fmtAr(r["Montant (Ar)"])+" Ar" : "—"}</td>
+      <td>${esc(r["Conditions paiement"]||"")}</td>
+      <td>${badgePO(r["Statut"])}</td>
+      <td>${r["Facture créée"]==="Oui" ? `<span class="badge badge-green">✓ Oui</span>` : `<span class="badge badge-gray">Non</span>`}</td>
+      <td>
+        <div style="display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="editPO('${esc(r["ID PO"]||"")}')">Éditer</button>
+          ${r["Lien Coupa"] ? `<a href="${esc(r["Lien Coupa"])}" target="_blank" class="btn btn-ghost btn-sm">Coupa↗</a>` : ""}
+          <button class="btn btn-ghost btn-sm" onclick="quickUpdatePO('${esc(r["ID PO"]||"")}','Acquitté')">✓ Acq.</button>
+        </div>
+      </td>
+    </tr>`).join("");
+}
+
+function editPO(id) {
+  const row = STATE.po.find(r => r["ID PO"] === id);
+  if (!row) return;
+  document.getElementById("poModalTitle").textContent = "Modifier le PO";
+  document.getElementById("poSaveBtn").textContent    = "Enregistrer";
+  document.getElementById("poEditId").value = id;
+  document.getElementById("po-numero").value     = row["Numéro PO"] || "";
+  document.getElementById("po-client").value     = row["Client"] || "";
+  document.getElementById("po-contact").value    = row["Contact"] || "";
+  document.getElementById("po-desc").value       = row["Description"] || "";
+  document.getElementById("po-montant").value    = row["Montant (Ar)"] || "";
+  document.getElementById("po-conditions").value = row["Conditions paiement"] || "NET 30";
+  document.getElementById("po-statut").value     = row["Statut"] || "À acquitter";
+  document.getElementById("po-coupa").value      = row["Lien Coupa"] || "";
+  document.getElementById("po-commentaire").value= row["Commentaire"] || "";
+  document.getElementById("po-date").value       = parseDate(row["Date réception"] || "");
+  document.getElementById("po-echeance").value   = parseDate(row["Échéance acquittement"] || "");
+  document.getElementById("modalPO").classList.add("open");
+}
+
+async function savePO() {
+  const id  = document.getElementById("poEditId").value;
+  const btn = document.getElementById("poSaveBtn");
+  const payload = {
+    numeroPO:      document.getElementById("po-numero").value.trim(),
+    dateReception: document.getElementById("po-date").value,
+    client:        document.getElementById("po-client").value.trim(),
+    contact:       document.getElementById("po-contact").value.trim(),
+    description:   document.getElementById("po-desc").value.trim(),
+    montant:       document.getElementById("po-montant").value,
+    conditions:    document.getElementById("po-conditions").value,
+    statut:        document.getElementById("po-statut").value,
+    echeance:      document.getElementById("po-echeance").value,
+    lienCoupa:     document.getElementById("po-coupa").value.trim(),
+    commentaire:   document.getElementById("po-commentaire").value.trim()
+  };
+  if (!payload.numeroPO || !payload.client) { showToast("N° PO et Client obligatoires"); return; }
+  btn.innerHTML = `<span class="spinner"></span>`;
+  btn.disabled  = true;
+  const action  = id ? "updatePO" : "createPO";
+  if (id) payload.id = id;
+  const res = await api(action, payload);
+  btn.innerHTML = id ? "Enregistrer" : "Créer le PO";
+  btn.disabled  = false;
+  if (res.ok) { closeModal("po"); showToast(res.message || "Sauvegardé"); loadPO(); loadDashboard(); }
+  else showToast("Erreur : " + res.error);
+}
+
+async function quickUpdatePO(id, statut) {
+  const res = await api("updatePO", { id, statut });
+  if (res.ok) { showToast("PO → " + statut); loadPO(); loadDashboard(); }
+}
+
+// ============================================================
+//  GMAIL
+// ============================================================
+async function loadGmail() {
+  document.getElementById("gmailList").innerHTML = `<div class="empty"><span class="spinner" style="border-color:rgba(26,74,58,.2);border-top-color:var(--green)"></span></div>`;
+  const res = await api("getGmailLeads");
+  if (!res.ok) {
+    document.getElementById("gmailList").innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res.error||"Erreur Gmail")}</div></div>`;
+    document.getElementById("gmailInfo").textContent = "Configurez l'URL GAS pour activer Gmail";
+    return;
+  }
+  STATE.gmail = res.data || [];
+  if (!STATE.gmail.length) {
+    document.getElementById("gmailList").innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Aucun e-mail commercial trouvé</div></div>`;
+    return;
+  }
+  document.getElementById("gmailInfo").textContent = STATE.gmail.length + " e-mail(s) chargé(s)";
+  document.getElementById("gmailList").innerHTML = STATE.gmail.map((m, i) => `
+    <div class="gmail-item ${m.important ? 'important' : m.unread ? 'unread' : ''}" onclick="precomposeGmail(${i})">
+      <div class="gmail-meta">
+        <span class="gmail-from">${esc(m.from||"")}</span>
+        <span class="gmail-date">${esc(m.date||"")}</span>
+      </div>
+      <div class="gmail-subject">${esc(m.subject||"")}</div>
+      <div class="gmail-snippet">${esc(m.snippet||"")}</div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        ${m.important ? `<span class="badge badge-red">Important</span>` : ""}
+        ${m.unread    ? `<span class="badge badge-orange">Non lu</span>` : `<span class="badge badge-gray">Lu</span>`}
+        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="event.stopPropagation();precomposeGmail(${i})">Répondre →</button>
+      </div>
+    </div>`).join("");
+}
+
+function precomposeGmail(i) {
+  const m = STATE.gmail[i];
+  if (!m) return;
+  const emailMatch = (m.from || "").match(/<(.+?)>/);
+  document.getElementById("emailTo").value      = emailMatch ? emailMatch[1] : m.from || "";
+  document.getElementById("emailSubject").value = "Re : " + (m.subject || "");
+  document.getElementById("emailBody").value    = "\n\n---\nMessage original de : " + m.from + "\nDate : " + m.date + "\n\n" + m.snippet;
+  switchSection("email", document.querySelector("[data-section='email']"));
+}
+
+// ============================================================
+//  ENVOI E-MAIL
+// ============================================================
+function precomposeRelance(client, email, produit) {
+  document.getElementById("emailTo").value      = email || "";
+  document.getElementById("emailSubject").value = "Relance — " + (produit || client);
+  document.getElementById("emailBody").value    = `Bonjour,
+
+Nous revenons vers vous concernant votre demande de devis pour : ${produit}.
+
+Pourriez-vous nous confirmer l'état de votre demande ? Nous sommes disponibles pour tout renseignement complémentaire.
+
+Cordialement,
+FOREVER MG
++261 34 03 767 69
+commercial4evermg@gmail.com`;
+  switchSection("email", document.querySelector("[data-section='email']"));
+}
+
+const TEMPLATES = {
+  accuse: {
+    subject: "Accusé de réception — FOREVER MG",
+    body: `Bonjour,
+
+Nous accusons bonne réception de votre demande et vous remercions de nous avoir contactés.
+
+Notre équipe va étudier votre besoin et vous transmettra un retour dans les meilleurs délais.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`
+  },
+  devis: {
+    subject: "Devis — FOREVER MG",
+    body: `Bonjour,
+
+Veuillez trouver ci-joint notre devis correspondant à votre demande.
+
+Ce devis est valable 30 jours. N'hésitez pas à nous contacter pour toute question ou modification.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`
+  },
+  relance: {
+    subject: "Relance devis — FOREVER MG",
+    body: `Bonjour,
+
+Nous revenons vers vous concernant le devis que nous vous avons transmis.
+
+Avez-vous eu l'occasion de l'étudier ? Nous restons disponibles pour toute question ou ajustement.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`
+  },
+  confirmation: {
+    subject: "Confirmation de votre commande — FOREVER MG",
+    body: `Bonjour,
+
+Nous avons bien réceptionné votre commande et vous en remercions.
+
+Notre équipe de production va prendre en charge votre demande. Nous vous tiendrons informé(e) de l'avancement.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`
+  }
+};
+
+function loadTemplate(key) {
+  const t = TEMPLATES[key];
+  if (!t) return;
+  if (!document.getElementById("emailSubject").value) document.getElementById("emailSubject").value = t.subject;
+  document.getElementById("emailBody").value = t.body;
+}
+
+function clearEmail() {
+  ["emailTo","emailCc","emailReplyTo","emailSubject","emailBody"].forEach(id => {
+    document.getElementById(id).value = "";
+  });
+}
+
+async function sendEmailNow() {
+  const to      = document.getElementById("emailTo").value.trim();
+  const subject = document.getElementById("emailSubject").value.trim();
+  const body    = document.getElementById("emailBody").value.trim();
+  if (!to || !subject || !body) { showToast("Destinataire, objet et corps obligatoires"); return; }
+  const res = await api("sendEmail", {
+    to, subject, body,
+    cc:      document.getElementById("emailCc").value.trim(),
+    replyTo: document.getElementById("emailReplyTo").value.trim()
+  });
+  if (res.ok) { showToast("✓ E-mail envoyé !"); clearEmail(); }
+  else showToast("Erreur : " + res.error);
+}
+
+async function saveDraft() {
+  const to      = document.getElementById("emailTo").value.trim();
+  const subject = document.getElementById("emailSubject").value.trim();
+  const body    = document.getElementById("emailBody").value.trim();
+  const res = await api("createDraft", { to, subject, body, cc: document.getElementById("emailCc").value.trim() });
+  if (res.ok) { showToast("✓ Brouillon sauvegardé dans Gmail"); clearEmail(); }
+  else showToast("Erreur : " + res.error);
+}
+
+// ============================================================
+//  UTILITAIRES UI
+// ============================================================
+function badgeStatut(s) {
+  const map = {
+    "Ouvert":   "badge-orange","En cours": "badge-blue",
+    "Validé":   "badge-green", "Perdu":    "badge-red",
+    "Annulé":   "badge-gray"
+  };
+  return `<span class="badge ${map[s]||"badge-gray"}">${esc(s||"—")}</span>`;
+}
+function badgePrio(p) {
+  const map = {
+    "Urgent":  "badge-red",  "Haute":  "badge-amber",
+    "Moyenne": "badge-blue", "Basse":  "badge-gray"
+  };
+  return `<span class="badge ${map[p]||"badge-gray"}">${esc(p||"—")}</span>`;
+}
+function badgePO(s) {
+  const map = {
+    "En retard":   "badge-red",   "À acquitter": "badge-amber",
+    "À facturer":  "badge-orange","Acquitté":    "badge-blue",
+    "Facturé":     "badge-green", "Clôturé":     "badge-gray"
+  };
+  return `<span class="badge ${map[s]||"badge-gray"}">${esc(s||"—")}</span>`;
+}
+function fmtAr(n) {
+  const num = parseFloat(String(n).replace(/\s/g,"")) || 0;
+  return Math.round(num).toLocaleString("fr-MG");
+}
+function esc(s) {
+  return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+}
+function parseDate(d) {
+  if (!d) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.split("T")[0];
+  const m = d.match(/(\d{2})\/(\d{2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+  return "";
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+function setStatus(txt, err) {
+  document.getElementById("statusText").textContent = txt;
+  document.getElementById("statusDot").className    = "dot" + (err ? " red" : "");
+}
+
+// Fermer modals en cliquant l'overlay
+document.querySelectorAll(".overlay").forEach(ov => {
+  ov.addEventListener("click", e => { if (e.target === ov) ov.classList.remove("open"); });
+});
+
+// ============================================================
+//  INIT
+// ============================================================
+document.addEventListener("DOMContentLoaded", () => {
+  if (GAS_URL === "VOTRE_URL_GAS_ICI") {
+    setStatus("Mode démo", true);
+    showToast("⚠️ Mode démo — configurez GAS_URL pour connecter Sheets");
+  }
+  loadDashboard();
+});
+</script>
+</body>
+</html>
