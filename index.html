@@ -723,6 +723,14 @@ function demoData(action, payload) {
 }
 
 // ============================================================
+//  FACTURATION
+// ============================================================
+function openFacturation() {
+  try { localStorage.setItem('facturepro_gas_url', window.GAS_URL || ""); } catch(e) {}
+  window.open('facturation.html', '_blank');
+}
+
+// ============================================================
 //  NAVIGATION
 // ============================================================
 function switchSection(id, btn) {
