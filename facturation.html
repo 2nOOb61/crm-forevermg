@@ -1267,7 +1267,2187 @@ document.addEventListener('DOMContentLoaded', function() {
     // Ajoutez les autres fonctions (saveQuote, deleteClient, convertQuoteToInvoice, etc.)
     // en suivant le modèle avec google.script.run
 </script>
-<?!= include('JavaScript'); ?>
+<script>
+
+const COMPANY_STORAGE_KEY = "facturepro_company_info";
+const PRINT_SETTINGS_KEY = "facturepro_print_settings";
+const AUTH_TOKEN_KEY = "facturepro_auth_token";
+const AUTH_USER_KEY = "facturepro_auth_user";
+
+const COMPANY_INFO_FALLBACK = {
+  name: "",
+  address: "",
+  phone: "",
+  email: "",
+  nif: "",
+  stat: "",
+  logoDataUrl: "",
+  bankName: "",
+  bankAccount: "",
+  bankIban: "",
+  bankBic: "",
+  paymentTerms: "",
+  responsibleName: "",
+  referenceLabel: "",
+  referenceValue: "",
+  purchaseOrderLabel: "",
+  purchaseOrderValue: ""
+};
+
+let companyInfoCache = null;
+
+// [ADD START: Company Signature]
+let companySignatureDataUrl = null;
+// [ADD END: Company Signature]
+
+function safeStorageGet(key){
+  try { return localStorage.getItem(key); } catch(e) { return null; }
+}
+function safeStorageSet(key, value){
+  try { localStorage.setItem(key, value); } catch(e) {}
+}
+
+function getAuthToken(){
+  return safeStorageGet(AUTH_TOKEN_KEY);
+}
+
+function getAuthUser(){
+  const raw = safeStorageGet(AUTH_USER_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch(e) { return null; }
+}
+
+function setAuthSession(token, user){
+  if (token) safeStorageSet(AUTH_TOKEN_KEY, token);
+  if (user) safeStorageSet(AUTH_USER_KEY, JSON.stringify(user));
+  updateUserLabel();
+  applyRoleVisibility();
+}
+
+function clearAuthSession(){
+  try { localStorage.removeItem(AUTH_TOKEN_KEY); } catch(e) {}
+  try { localStorage.removeItem(AUTH_USER_KEY); } catch(e) {}
+  updateUserLabel();
+  applyRoleVisibility();
+}
+
+function updateUserLabel(){
+  const el = document.getElementById("userLabel");
+  if (!el) return;
+  const user = getAuthUser();
+  el.textContent = user?.displayName || user?.username || "—";
+}
+
+function getAuthTokenOrLogin(){
+  const token = getAuthToken();
+  if (!token) {
+    showLoginScreen("login");
+    return null;
+  }
+  return token;
+}
+
+function showLoginError(text){
+  const el = document.getElementById("login_error");
+  if (!el) return;
+  if (!text) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.textContent = text;
+  el.style.display = "block";
+}
+
+function showSetupError(text){
+  const el = document.getElementById("setup_error");
+  if (!el) return;
+  if (!text) {
+    el.style.display = "none";
+    el.textContent = "";
+    return;
+  }
+  el.textContent = text;
+  el.style.display = "block";
+}
+
+function showLoginScreen(mode){
+  const login = document.getElementById("login");
+  const app = document.getElementById("app");
+  const loginBlock = document.getElementById("loginBlock");
+  const setupBlock = document.getElementById("setupBlock");
+  if (login) login.style.display = "flex";
+  if (app) app.style.display = "none";
+  if (loginBlock && setupBlock) {
+    if (mode === "setup") {
+      loginBlock.style.display = "none";
+      setupBlock.style.display = "block";
+    } else {
+      loginBlock.style.display = "block";
+      setupBlock.style.display = "none";
+    }
+  }
+  showLoginError("");
+  showSetupError("");
+}
+
+let __appStarted = false;
+function showAppScreen(){
+  const login = document.getElementById("login");
+  const app = document.getElementById("app");
+  if (login) login.style.display = "none";
+  if (app) app.style.display = "block";
+  updateUserLabel();
+  applyRoleVisibility();
+  loadCompanyInfoRemote();
+  // [ADD START: Company Signature]
+  loadCompanySignature();
+  // [ADD END: Company Signature]
+  if (!__appStarted && typeof startApp === "function") {
+    __appStarted = true;
+    startApp();
+  }
+}
+
+function applyRoleVisibility(){
+  const role = String(getAuthUser()?.role || "viewer").toLowerCase();
+  document.querySelectorAll("[data-role]").forEach(el => {
+    const required = String(el.getAttribute("data-role") || "").toLowerCase();
+    if (!required) return;
+    el.style.display = (required === role || (required === "admin" && role === "admin")) ? "" : "none";
+  });
+}
+
+function initAuth(){
+  if (typeof ensureScriptRun === "function" && !ensureScriptRun()) {
+    showLoginScreen("login");
+    return;
+  }
+  const token = getAuthToken();
+  if (token) {
+    google.script.run
+      .withSuccessHandler(function(user){
+        if (user && user.username) {
+          setAuthSession(token, user);
+          showAppScreen();
+          return;
+        }
+        clearAuthSession();
+        checkHasUsers();
+      })
+      .withFailureHandler(function(){
+        clearAuthSession();
+        checkHasUsers();
+      })
+      .validateToken(token);
+    return;
+  }
+  checkHasUsers();
+}
+
+function checkHasUsers(){
+  google.script.run
+    .withSuccessHandler(function(hasUsers){
+      showLoginScreen(hasUsers ? "login" : "setup");
+    })
+    .withFailureHandler(function(){
+      showLoginScreen("login");
+    })
+    .hasUsers();
+}
+
+window.submitLogin = function(){
+  const username = document.getElementById("login_username")?.value.trim();
+  const password = document.getElementById("login_password")?.value || "";
+  if (!username || !password) {
+    showLoginError("Nom d’utilisateur et mot de passe requis.");
+    return;
+  }
+  showLoginError("");
+  google.script.run
+    .withSuccessHandler(function(res){
+      if (res && res.ok && res.token) {
+        setAuthSession(res.token, res.user || { username: username });
+        showAppScreen();
+      } else {
+        showLoginError(res && res.error ? res.error : "Connexion impossible.");
+      }
+    })
+    .withFailureHandler(function(err){
+      showLoginError("Erreur: " + (err && err.message ? err.message : err));
+    })
+    .authenticate(username, password);
+};
+
+window.submitSetup = function(){
+  const username = document.getElementById("setup_username")?.value.trim();
+  const displayName = document.getElementById("setup_display")?.value.trim();
+  const password = document.getElementById("setup_password")?.value || "";
+  const confirm = document.getElementById("setup_confirm")?.value || "";
+  if (!username || !password) {
+    showSetupError("Nom d’utilisateur et mot de passe requis.");
+    return;
+  }
+  if (password !== confirm) {
+    showSetupError("Les mots de passe ne correspondent pas.");
+    return;
+  }
+  showSetupError("");
+  google.script.run
+    .withSuccessHandler(function(res){
+      if (res && res.ok && res.token) {
+        setAuthSession(res.token, res.user || { username: username, displayName: displayName || username });
+        showAppScreen();
+      } else {
+        showSetupError(res && res.error ? res.error : "Création impossible.");
+      }
+    })
+    .withFailureHandler(function(err){
+      showSetupError("Erreur: " + (err && err.message ? err.message : err));
+    })
+    .createFirstAdmin(username, password, displayName);
+};
+
+window.logout = function(){
+  clearAuthSession();
+  showLoginScreen("login");
+};
+
+function normalizeCompanyInfo(obj){
+  if (!obj || typeof obj !== "object") return Object.assign({}, COMPANY_INFO_FALLBACK);
+  return Object.assign({}, COMPANY_INFO_FALLBACK, obj);
+}
+
+function getCompanyInfo(){
+  if (companyInfoCache) return companyInfoCache;
+  const raw = safeStorageGet(COMPANY_STORAGE_KEY);
+  if (!raw) return Object.assign({}, COMPANY_INFO_FALLBACK);
+  try {
+    const parsed = JSON.parse(raw);
+    companyInfoCache = normalizeCompanyInfo(parsed);
+    return companyInfoCache;
+  } catch(e) {}
+  return Object.assign({}, COMPANY_INFO_FALLBACK);
+}
+function saveCompanyInfoLocal(info){
+  const normalized = normalizeCompanyInfo(info);
+  companyInfoCache = normalized;
+  safeStorageSet(COMPANY_STORAGE_KEY, JSON.stringify(normalized));
+}
+
+function loadCompanyInfoRemote(){
+  if (typeof ensureScriptRun === "function" && !ensureScriptRun()) return;
+  if (typeof google === "undefined" || !google.script || !google.script.run) return;
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  google.script.run
+    .withSuccessHandler(function(info){
+      if (info && typeof info === "object") {
+        saveCompanyInfoLocal(info);
+        return;
+      }
+      const local = getCompanyInfo();
+      const hasLocal = local && Object.values(local).some(v => String(v || "").trim() !== "");
+      if (hasLocal) {
+        saveCompanyInfoRemote(local);
+      }
+    })
+    .withFailureHandler(function(err){
+      console.warn("Company info load failed:", err);
+    })
+    .getCompanyInfo(token);
+}
+
+function saveCompanyInfoRemote(info, onDone){
+  if (typeof ensureScriptRun === "function" && !ensureScriptRun()) {
+    saveCompanyInfoLocal(info);
+    if (onDone) onDone();
+    return;
+  }
+  if (typeof google === "undefined" || !google.script || !google.script.run){
+    saveCompanyInfoLocal(info);
+    if (onDone) onDone();
+    return;
+  }
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  saveCompanyInfoLocal(info);
+  google.script.run
+    .withSuccessHandler(function(saved){
+      if (saved) saveCompanyInfoLocal(saved);
+      if (onDone) onDone();
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement infos entreprise: " + (err && err.message ? err.message : err));
+      if (onDone) onDone(err);
+    })
+    .saveCompanyInfo(token, info);
+}
+
+function getPrintSettings(){
+  const raw = safeStorageGet(PRINT_SETTINGS_KEY);
+  if (!raw) return { showDiscount: true, showAcompte: true };
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") {
+      const cleaned = {
+        showDiscount: !!parsed.showDiscount,
+        showAcompte: !!parsed.showAcompte
+      };
+      if ("showPricesOnDelivery" in parsed) {
+        savePrintSettingsLocal(cleaned);
+      }
+      return cleaned;
+    }
+  } catch(e) {}
+  return { showDiscount: true, showAcompte: true };
+}
+function savePrintSettingsLocal(settings){
+  safeStorageSet(PRINT_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+// [ADD START: Company Signature]
+function loadCompanySignature(){
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  google.script.run
+    .withSuccessHandler(function(res){
+      companySignatureDataUrl = res && res.signatureDataUrl ? res.signatureDataUrl : null;
+      renderCompanySignature();
+    })
+    .withFailureHandler(function(){
+      companySignatureDataUrl = null;
+      renderCompanySignature();
+    })
+    .getCompanySignature(token);
+}
+
+function saveCompanySignatureRemote(dataUrl, onDone){
+  const token = getAuthTokenOrLogin();
+  if (!token) { if (typeof onDone === "function") onDone(); return; }
+  google.script.run
+    .withSuccessHandler(function(res){
+      companySignatureDataUrl = res && res.signatureDataUrl ? res.signatureDataUrl : null;
+      if (typeof onDone === "function") onDone(res);
+    })
+    .withFailureHandler(function(){
+      if (typeof onDone === "function") onDone();
+    })
+    .setCompanySignature(token, dataUrl || "");
+}
+
+function renderCompanySignature() {
+  const img = document.getElementById("company-signature-img");
+  if (!img) return;
+
+  if (companySignatureDataUrl) {
+    img.src = companySignatureDataUrl;
+    img.style.display = "block";
+  } else {
+    img.style.display = "none";
+  }
+}
+// [ADD END: Company Signature]
+
+window.openCompanyInfoModal = function(){
+  const info = getCompanyInfo();
+  window.__companyLogoDataUrl = info.logoDataUrl || "";
+  // [ADD START: Company Signature]
+  window.__companySignatureDataUrl = companySignatureDataUrl || "";
+  // [ADD END: Company Signature]
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">Infos entreprise</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveCompanyInfoForm()">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div><label class="text-sm">Nom</label><input id="co_name" class="input" value="${escapeHtml(info.name || "")}"></div>
+            <div><label class="text-sm">Téléphone</label><input id="co_phone" class="input" value="${escapeHtml(info.phone || "")}"></div>
+            <div><label class="text-sm">Email</label><input id="co_email" class="input" value="${escapeHtml(info.email || "")}"></div>
+            <div><label class="text-sm">Adresse</label><input id="co_address" class="input" value="${escapeHtml(info.address || "")}"></div>
+            <div><label class="text-sm">NIF</label><input id="co_nif" class="input" value="${escapeHtml(info.nif || "")}"></div>
+            <div><label class="text-sm">STAT</label><input id="co_stat" class="input" value="${escapeHtml(info.stat || "")}"></div>\r\n            <div class="md:col-span-2"><div class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">Banque</div></div>
+            <div><label class="text-sm">Nom de banque</label><input id="co_bank_name" class="input" value="${escapeHtml(info.bankName || "")}"></div>
+            <div><label class="text-sm">Compte</label><input id="co_bank_account" class="input" value="${escapeHtml(info.bankAccount || "")}"></div>
+            <div><label class="text-sm">IBAN</label><input id="co_bank_iban" class="input" value="${escapeHtml(info.bankIban || "")}"></div>
+            <div><label class="text-sm">BIC</label><input id="co_bank_bic" class="input" value="${escapeHtml(info.bankBic || "")}"></div>
+            <div class="md:col-span-2"><div class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">Conditions</div></div>
+            <div class="md:col-span-2"><label class="text-sm">Conditions de paiement</label><input id="co_payment_terms" class="input" value="${escapeHtml(info.paymentTerms || "")}"></div>
+            <div class="md:col-span-2"><label class="text-sm">Responsable / Signature</label><input id="co_responsible" class="input" value="${escapeHtml(info.responsibleName || "")}"></div>
+            <div class="md:col-span-2"><div class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">References</div></div>
+            <div><label class="text-sm">Libelle reference</label><input id="co_ref_label" class="input" value="${escapeHtml(info.referenceLabel || "")}" placeholder="Reference"></div>
+            <div><label class="text-sm">Valeur reference</label><input id="co_ref_value" class="input" value="${escapeHtml(info.referenceValue || "")}"></div>
+            <div><label class="text-sm">Libelle bon de commande</label><input id="co_po_label" class="input" value="${escapeHtml(info.purchaseOrderLabel || "")}" placeholder="Bon de commande"></div>
+            <div><label class="text-sm">Valeur bon de commande</label><input id="co_po_value" class="input" value="${escapeHtml(info.purchaseOrderValue || "")}"></div>
+            <div class="md:col-span-2">
+              <label class="text-sm">Logo</label>
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="w-24 h-24 rounded-lg flex items-center justify-center overflow-hidden" style="border:1px solid var(--border); background: var(--surface-alt);">
+                  <img id="co_logo_preview" src="${escapeHtml(info.logoDataUrl || "")}" style="max-width:100%; max-height:100%; ${info.logoDataUrl ? "" : "display:none;"}">
+                  <span id="co_logo_placeholder" class="text-xs" style="color: var(--text-muted); ${info.logoDataUrl ? "display:none;" : ""}">Aucun logo</span>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <input id="co_logo" class="input" type="file" accept="image/*" onchange="handleCompanyLogoChange(this.files)">
+                  <button class="btn btn-secondary" type="button" onclick="removeCompanyLogo()">Retirer</button>
+                </div>
+              </div>
+              <div class="text-xs mt-2" style="color: var(--text-muted);">PNG/JPG conseillé, max 600px.</div>
+            </div>
+            <!-- [ADD START: Company Signature] -->
+            <div class="md:col-span-2">
+              <label class="text-sm">Signature (PNG)</label>
+              <div class="flex flex-wrap items-center gap-3">
+                <div class="w-48 h-24 rounded-lg flex items-center justify-center overflow-hidden" style="border:1px solid var(--border); background: var(--surface-alt);">
+                  <img id="co_sig_preview" src="${escapeHtml(window.__companySignatureDataUrl || "")}" style="max-width:100%; max-height:100%; ${window.__companySignatureDataUrl ? "" : "display:none;"}">
+                  <span id="co_sig_placeholder" class="text-xs" style="color: var(--text-muted); ${window.__companySignatureDataUrl ? "display:none;" : ""}">Aucune signature</span>
+                </div>
+                <div class="flex flex-col gap-2">
+                  <input id="co_sig" class="input" type="file" accept="image/png" onchange="handleCompanySignatureChange(this.files)">
+                  <button class="btn btn-secondary" type="button" onclick="removeCompanySignature()">Retirer</button>
+                </div>
+              </div>
+              <div class="text-xs mt-2" style="color: var(--text-muted);">PNG recommandé, max 800x400 px.</div>
+            </div>
+            <!-- [ADD END: Company Signature] -->
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+};
+
+function setCompanyLogoPreview(dataUrl){
+  const img = document.getElementById("co_logo_preview");
+  const placeholder = document.getElementById("co_logo_placeholder");
+  if (!img || !placeholder) return;
+  if (dataUrl) {
+    img.src = dataUrl;
+    img.style.display = "block";
+    placeholder.style.display = "none";
+  } else {
+    img.removeAttribute("src");
+    img.style.display = "none";
+    placeholder.style.display = "block";
+  }
+}
+
+// [ADD START: Company Signature]
+function setCompanySignaturePreview(dataUrl){
+  const img = document.getElementById("co_sig_preview");
+  const placeholder = document.getElementById("co_sig_placeholder");
+  if (!img || !placeholder) return;
+  if (dataUrl) {
+    img.src = dataUrl;
+    img.style.display = "block";
+    placeholder.style.display = "none";
+  } else {
+    img.removeAttribute("src");
+    img.style.display = "none";
+    placeholder.style.display = "block";
+  }
+}
+// [ADD END: Company Signature]
+
+function readImageFileAsDataUrl(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error || new Error("Lecture impossible."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function resizeImageDataUrl(dataUrl, maxW, maxH, quality){
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / img.width, maxH / img.height);
+      if (scale >= 1) return resolve(dataUrl);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+window.handleCompanyLogoChange = function(files){
+  const file = files && files[0];
+  if (!file) return;
+  if (typeof setLoading === "function") setLoading(true, "Chargement logo...");
+  readImageFileAsDataUrl(file)
+    .then((dataUrl) => resizeImageDataUrl(dataUrl, 600, 300, 0.85))
+    .then((resized) => {
+      window.__companyLogoDataUrl = resized;
+      setCompanyLogoPreview(resized);
+    })
+    .catch((err) => {
+      alert("Erreur logo: " + (err && err.message ? err.message : err));
+    })
+    .finally(() => {
+      if (typeof setLoading === "function") setLoading(false);
+    });
+};
+
+window.removeCompanyLogo = function(){
+  window.__companyLogoDataUrl = "";
+  const input = document.getElementById("co_logo");
+  if (input) input.value = "";
+  setCompanyLogoPreview("");
+};
+
+// [ADD START: Company Signature]
+window.handleCompanySignatureChange = function(files){
+  const file = files && files[0];
+  if (!file) return;
+  if (typeof setLoading === "function") setLoading(true, "Chargement signature...");
+  readImageFileAsDataUrl(file)
+    .then((dataUrl) => resizeImageDataUrl(dataUrl, 800, 400, 0.92))
+    .then((resized) => {
+      window.__companySignatureDataUrl = resized;
+      setCompanySignaturePreview(resized);
+    })
+    .catch((err) => {
+      alert("Erreur signature: " + (err && err.message ? err.message : err));
+    })
+    .finally(() => {
+      if (typeof setLoading === "function") setLoading(false);
+    });
+};
+
+window.removeCompanySignature = function(){
+  window.__companySignatureDataUrl = "";
+  const input = document.getElementById("co_sig");
+  if (input) input.value = "";
+  setCompanySignaturePreview("");
+};
+// [ADD END: Company Signature]
+
+function saveCompanyInfoForm(){
+  const info = {
+    name: document.getElementById("co_name").value.trim(),
+    phone: document.getElementById("co_phone").value.trim(),
+    email: document.getElementById("co_email").value.trim(),
+    address: document.getElementById("co_address").value.trim(),
+    nif: document.getElementById("co_nif").value.trim(),
+    stat: document.getElementById("co_stat").value.trim(),
+    logoDataUrl: window.__companyLogoDataUrl || "",
+    bankName: document.getElementById("co_bank_name").value.trim(),
+    bankAccount: document.getElementById("co_bank_account").value.trim(),
+    bankIban: document.getElementById("co_bank_iban").value.trim(),
+    bankBic: document.getElementById("co_bank_bic").value.trim(),
+    paymentTerms: document.getElementById("co_payment_terms").value.trim(),
+    responsibleName: document.getElementById("co_responsible").value.trim(),
+    referenceLabel: document.getElementById("co_ref_label").value.trim(),
+    referenceValue: document.getElementById("co_ref_value").value.trim(),
+    purchaseOrderLabel: document.getElementById("co_po_label").value.trim(),
+    purchaseOrderValue: document.getElementById("co_po_value").value.trim()
+  };
+  if (typeof setLoading === "function") setLoading(true, "Enregistrement...");
+  saveCompanyInfoRemote(info, function(){
+    // [ADD START: Company Signature]
+    saveCompanySignatureRemote(window.__companySignatureDataUrl || "", function(res){
+      if (res && res.signatureDataUrl) {
+        companySignatureDataUrl = res.signatureDataUrl;
+      }
+    });
+    // [ADD END: Company Signature]
+    closeModal();
+    if (typeof setLoading === "function") setLoading(false);
+  });
+}
+
+window.openPrintLayoutModal = function(){
+  const s = getPrintSettings();
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">Paramètres d'impression</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); savePrintSettingsForm()">
+          <div class="space-y-3">
+            <label class="flex items-center gap-2"><input id="ps_show_discount" type="checkbox" ${s.showDiscount ? "checked" : ""}> Afficher la remise</label>
+            <label class="flex items-center gap-2"><input id="ps_show_acompte" type="checkbox" ${s.showAcompte ? "checked" : ""}> Afficher acompte</label>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+};
+
+window.openInterface = function(){
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.set("interface", "1");
+    window.open(url.toString(), "_blank");
+  } catch (e) {
+    window.open("?interface=1", "_blank");
+  }
+};
+
+// ---------------------------
+// Users admin
+// ---------------------------
+let __usersCache = [];
+let __userEditLookup = "";
+
+function openUsersModal(){
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  if (typeof setLoading === "function") setLoading(true, "Chargement...");
+  google.script.run
+    .withSuccessHandler(function(list){
+      __usersCache = Array.isArray(list) ? list : [];
+      renderUsersModal();
+      if (typeof setLoading === "function") setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur chargement utilisateurs: " + (err && err.message ? err.message : err));
+      if (typeof setLoading === "function") setLoading(false);
+    })
+    .listUsers(token);
+}
+
+function renderUsersModal(){
+  const rows = __usersCache.map((u, i) => `
+    <tr>
+      <td class="py-2 pr-3">${escapeHtml(u.displayName || "")}</td>
+      <td class="py-2 pr-3">${escapeHtml(u.username || "")}</td>
+      <td class="py-2 pr-3">${escapeHtml(u.email || "")}</td>
+      <td class="py-2 pr-3">${escapeHtml(u.role || "")}</td>
+      <td class="py-2 pr-3">${u.active ? "Actif" : "Inactif"}</td>
+      <td class="py-2 pr-3 text-right"><button class="btn btn-secondary" type="button" onclick="editUser(${i})">Modifier</button></td>
+    </tr>
+  `).join("");
+
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">Gestion des utilisateurs</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveUserForm();">
+          <input type="hidden" id="user_lookup" value="${escapeHtml(__userEditLookup || "")}">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm">Email</label>
+              <input id="user_email" class="input" placeholder="email@exemple.com">
+            </div>
+            <div>
+              <label class="text-sm">Nom d'utilisateur</label>
+              <input id="user_username" class="input" placeholder="Identifiant">
+            </div>
+            <div>
+              <label class="text-sm">Nom affiché</label>
+              <input id="user_display" class="input" placeholder="Nom complet">
+            </div>
+            <div>
+              <label class="text-sm">Rôle</label>
+              <select id="user_role" class="input">
+                <option value="admin">admin</option>
+                <option value="manager">manager</option>
+                <option value="sales">sales</option>
+                <option value="accounting">accounting</option>
+                <option value="logistics">logistics</option>
+                <option value="viewer">viewer</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm">Mot de passe</label>
+              <input id="user_password" type="password" class="input" placeholder="Laisser vide pour ne pas changer">
+            </div>
+            <div class="flex items-end gap-2">
+              <label class="text-sm flex items-center gap-2"><input id="user_active" type="checkbox" checked> Actif</label>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-4">
+            <button class="btn btn-secondary" type="button" onclick="resetUserForm()">Nouveau</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+        <div class="mt-6">
+          <div class="text-sm mb-2" style="color: var(--text-muted);">Utilisateurs existants</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left" style="color: var(--text-muted);">
+                  <th class="py-2 pr-3">Nom</th>
+                  <th class="py-2 pr-3">Utilisateur</th>
+                  <th class="py-2 pr-3">Email</th>
+                  <th class="py-2 pr-3">Rôle</th>
+                  <th class="py-2 pr-3">Statut</th>
+                  <th class="py-2 pr-3 text-right"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows || `<tr><td colspan="6" class="py-2 text-sm" style="color: var(--text-muted);">Aucun utilisateur</td></tr>`}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  openModal(html);
+}
+
+function editUser(index){
+  const u = __usersCache[index];
+  if (!u) return;
+  __userEditLookup = (u.email || u.username || "");
+  document.getElementById("user_lookup").value = __userEditLookup;
+  document.getElementById("user_email").value = u.email || "";
+  document.getElementById("user_username").value = u.username || "";
+  document.getElementById("user_display").value = u.displayName || "";
+  document.getElementById("user_role").value = u.role || "viewer";
+  document.getElementById("user_active").checked = !!u.active;
+  document.getElementById("user_password").value = "";
+}
+
+function resetUserForm(){
+  __userEditLookup = "";
+  const elLookup = document.getElementById("user_lookup");
+  if (elLookup) elLookup.value = "";
+  const email = document.getElementById("user_email");
+  const username = document.getElementById("user_username");
+  const display = document.getElementById("user_display");
+  const role = document.getElementById("user_role");
+  const active = document.getElementById("user_active");
+  const password = document.getElementById("user_password");
+  if (email) email.value = "";
+  if (username) username.value = "";
+  if (display) display.value = "";
+  if (role) role.value = "viewer";
+  if (active) active.checked = true;
+  if (password) password.value = "";
+}
+
+function saveUserForm(){
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  const email = document.getElementById("user_email").value.trim();
+  const username = document.getElementById("user_username").value.trim();
+  if (!email && !username) {
+    alert("Email ou nom d'utilisateur requis.");
+    return;
+  }
+  const payload = {
+    lookup: document.getElementById("user_lookup").value.trim(),
+    email: email,
+    username: username,
+    displayName: document.getElementById("user_display").value.trim(),
+    role: document.getElementById("user_role").value,
+    active: document.getElementById("user_active").checked ? 1 : 0,
+    password: document.getElementById("user_password").value
+  };
+  if (typeof setLoading === "function") setLoading(true, "Enregistrement...");
+  google.script.run
+    .withSuccessHandler(function(res){
+      if (res && res.ok === false) {
+        alert(res.error || "Erreur enregistrement utilisateur.");
+      }
+      resetUserForm();
+      openUsersModal();
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement utilisateur: " + (err && err.message ? err.message : err));
+      if (typeof setLoading === "function") setLoading(false);
+    })
+    .saveUser(token, payload);
+}
+
+function savePrintSettingsForm(){
+  const settings = {
+    showDiscount: document.getElementById("ps_show_discount").checked,
+    showAcompte: document.getElementById("ps_show_acompte").checked
+  };
+  savePrintSettingsLocal(settings);
+  closeModal();
+}
+
+window.printDocument = function(type, id){
+  let doc;
+  if (type === "quote") doc = quotes.find(x => x.id === id);
+  if (type === "invoice") doc = invoices.find(x => x.id === id);
+  if (type === "delivery") doc = deliveries.find(x => x.id === id);
+  if (!doc) return alert("Document introuvable.");
+
+  const client = clients.find(c => c.id === doc.clientId) || {};
+  const company = getCompanyInfo();
+  const settings = getPrintSettings();
+
+  const html = buildPrintHtml(type, doc, client, company, settings);
+  const win = window.open("", "_blank", "width=900,height=1100");
+  if (!win) {
+    alert("Veuillez autoriser les pop-ups pour imprimer.");
+    return;
+  }
+  win.document.open();
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => win.print(), 300);
+};
+
+function buildPrintHtml(type, doc, client, company, settings){
+  const title = type === "quote" ? "Devis" : (type === "invoice" ? "Facture" : "Bon de livraison");
+  const number = doc.number || doc.id || "";
+  const date = formatDate(doc.date);
+  const totals = getDocTotals(doc);
+  const items = doc.items || [];
+  const isDelivery = type === "delivery";
+  const showPrices = !isDelivery;
+  const discountRate = parseNumber(doc.discountRate || 0);
+  const acompte = parseNumber(doc.acompte || 0);
+  const isInvoice = type === "invoice"; // FIX
+  const totalTTC = parseNumber((totals && totals.totalTTC) || 0); // FIX
+  const finalTotal = isInvoice ? Math.max(0, totalTTC - acompte) : totalTTC; // FIX
+  const bodyClass = `layout-${type}`;
+
+  const safe = (v) => escapeHtml(String(v ?? ""));
+  const statusMap = {
+    quote: { draft: "Brouillon", sent: "Envoye", converted: "Converti" },
+    invoice: { pending: "En attente", partial: "Partiel", paid: "Payee", overdue: "En retard" },
+    delivery: { draft: "Brouillon", sent: "Envoye", delivered: "Livre" }
+  };
+  const rawStatus = String(doc.status || "").toLowerCase();
+  const statusText = (statusMap[type] && statusMap[type][rawStatus]) ? statusMap[type][rawStatus] : (doc.status || "");
+  const statusRow = ""; // FIX: masquer le statut sur le BL
+
+  const logoHtml = company.logoDataUrl
+    ? `<img src="${safe(company.logoDataUrl)}" alt="Logo" style="max-height:70px; max-width:180px; object-fit:contain;" />`
+    : `<div style="width:180px; height:60px; border:1px dashed #cbd5f5; display:flex; align-items:center; justify-content:center; color:#6b7280; font-size:12px;">LOGO</div>`;
+
+  const companyPhoneEmail = [company.phone, company.email].filter(Boolean).map(v => safe(v)).join(" - ");
+  const companyIds = [];
+  if (company.nif) companyIds.push(`NIF: ${company.nif}`);
+  if (company.stat) companyIds.push(`STAT: ${company.stat}`);
+  const companyIdsLine = companyIds.map(v => safe(v)).join(" - ");
+  const referenceLabel = company.referenceLabel || "Reference";
+  const purchaseOrderLabel = company.purchaseOrderLabel || "Bon de commande";
+  const referenceRow = company.referenceValue
+    ? `<div class="k">${safe(referenceLabel)}</div><div class="v">${safe(company.referenceValue)}</div>`
+    : "";
+  const purchaseOrderRow = company.purchaseOrderValue
+    ? `<div class="k">${safe(purchaseOrderLabel)}</div><div class="v">${safe(company.purchaseOrderValue)}</div>`
+    : "";
+  const bankLines = [];
+  if (company.bankName) bankLines.push(safe(company.bankName));
+  if (company.bankAccount) bankLines.push(safe(company.bankAccount));
+  if (company.bankIban) bankLines.push(safe(company.bankIban));
+  if (company.bankBic) bankLines.push(safe(company.bankBic));
+  const bankBlock = bankLines.length ? `<div><div><strong>Banque</strong></div><div>${bankLines.join("</div><div>")}</div></div>` : "";
+  const termsBlock = company.paymentTerms ? `<div><div><strong>Conditions</strong></div><div>${safe(company.paymentTerms)}</div></div>` : "";
+  const footerBlocks = [bankBlock, termsBlock].filter(Boolean).join("");
+  const responsibleBlock = company.responsibleName ? `<div class="doc-footer"><div>${safe(company.responsibleName)}</div></div>` : "";
+
+  // [ADD START: Company Signature]
+  const signatureImgHtml = companySignatureDataUrl
+    ? `<img id="company-signature-img" src="${safe(companySignatureDataUrl)}" alt="Signature entreprise" style="max-width:220px; height:auto; display:block; margin-top:8px; object-fit:contain;" />`
+    : `<img id="company-signature-img" style="display:none; max-width:220px; height:auto; margin-top:8px; object-fit:contain;" />`;
+  // [ADD END: Company Signature]
+
+  // FIX: BL table columns without "Unite"
+  const tableHead = isDelivery ? `
+      <tr>
+        <th>Designation</th>
+        <th style="text-align:right;">Qte</th>
+      </tr>
+    ` : `
+      <tr>
+        <th>Designation</th>
+        <th style="text-align:right;">Qte</th>
+        <th style="text-align:right;">PU</th>
+        <th style="text-align:right;">Total</th>
+      </tr>
+    `;
+
+  const rows = items.map(it => {
+    const desc = safe(it.description || "");
+    const qty = parseNumber(it.qty || 0);
+    const unit = parseNumber(it.unitPrice || 0);
+    const line = lineTotal(it);
+    if (isDelivery) {
+      return `<tr>
+        <td>${desc}</td>
+        <td style="text-align:right;">${qty}</td>
+      </tr>`;
+    }
+    return `<tr>
+      <td>${desc}</td>
+      <td style="text-align:right;">${qty}</td>
+      <td style="text-align:right;">${formatAr(unit)}</td>
+      <td style="text-align:right;">${formatAr(line)}</td>
+    </tr>`;
+  }).join("");
+
+  const emptyRow = isDelivery
+    ? "<tr><td colspan='2'>Aucun article</td></tr>"
+    : "<tr><td colspan='4'>Aucun article</td></tr>";
+  const totalQty = items.reduce((sum, it) => sum + Math.max(0, parseNumber(it.qty || 0)), 0); // FIX
+  const deliveryTotalRow = isDelivery ? `
+    <tr>
+      <td><strong>TOTAL</strong></td>
+      <td style="text-align:right;"><strong>${safe(totalQty)}</strong></td>
+    </tr>
+  ` : ""; // FIX
+
+  const totalsRows = [];
+  if (showPrices) {
+    totalsRows.push(`<div class="totals-row"><span>Total TTC</span><strong>${formatAr(totals.totalTTC || 0)}</strong></div>`);
+    if (settings.showDiscount) {
+      const discountAmount = Math.max(0, (totals.subTotal || 0) * (discountRate / 100));
+      totalsRows.push(`<div class="totals-row"><span>Remise</span><strong>${formatAr(discountAmount)}</strong></div>`);
+    }
+    if (type === "invoice" && settings.showAcompte) {
+      totalsRows.push(`<div class="totals-row"><span>Acompte</span><strong>${formatAr(acompte)}</strong></div>`);
+      totalsRows.push(`<div class="totals-row totals-grand"><span>Reste a payer</span><strong>${formatAr(Math.max(0, (totals.totalTTC || 0) - acompte))}</strong></div>`);
+    }
+  }
+  const totalsHtml = showPrices ? `
+    <div class="totals" style="margin-top:12px;">
+      ${totalsRows.join("")}
+    </div>
+  ` : "";
+  const amountWordsText = (isInvoice && typeof numberToWordsFr === "function") ? numberToWordsFr(finalTotal) : ""; // FIX
+  const amountWordsHtml = (isInvoice && amountWordsText) ? `
+    <div class="doc-box" style="margin-top:12px;">
+      <div style="font-size:13px; line-height:1.5;">
+        Arrêté la présente facture à la somme de :<br>
+        <strong>${safe(amountWordsText)} Ariary (${safe(formatAr(finalTotal))})</strong>
+      </div>
+    </div>
+  ` : ""; // FIX
+
+  return `
+    <!DOCTYPE html>
+    <html lang="fr">
+    <head>
+      <meta charset="UTF-8" />
+      <title>${safe(title)} ${safe(number)}</title>
+      <style>
+        :root{
+          --border: #e2e8f0;
+          --text: #1e293b;
+          --text-muted: #64748b;
+        }
+        body{ font-family: Arial, sans-serif; color:var(--text); background:#f8fafc; margin:24px; }
+        .doc-wrap{
+          max-width: 900px;
+          margin: 0 auto;
+          background: #fff;
+          border: 1px solid var(--border);
+          border-radius: 12px;
+          padding: 24px;
+        }
+        .doc-grid{
+          display:grid;
+          grid-template-columns: 1.2fr .8fr;
+          gap:16px;
+          align-items:start;
+        }
+        .doc-box{
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:14px 16px;
+        }
+        .doc-title{
+          font-size: 22px;
+          font-weight: 800;
+          letter-spacing:.02em;
+        }
+        .doc-meta{
+          display:grid;
+          gap:6px;
+          font-size: 13px;
+          color: var(--text-muted);
+        }
+        .doc-meta strong{ color: var(--text); font-weight:700; }
+        .doc-kv{
+          display:grid;
+          grid-template-columns: 120px 1fr;
+          gap:6px 10px;
+          font-size:13px;
+        }
+        .doc-kv .k{ color: var(--text-muted); }
+        .doc-kv .v{ color: var(--text); font-weight:600; }
+        .doc-section-title{
+          font-size: 12px;
+          text-transform: uppercase;
+          letter-spacing:.08em;
+          color: var(--text-muted);
+          font-weight:800;
+          margin-bottom:10px;
+        }
+        .doc-table th{
+          background: #f8fafc;
+          border-bottom:1px solid var(--border);
+        }
+        .doc-table td, .doc-table th{
+          padding:10px 12px;
+          border-bottom:1px solid var(--border);
+          font-size: 13px;
+        }
+        .doc-table tr:nth-child(even) td{ background:#fcfcfd; }
+        .totals{
+          max-width: 340px;
+          margin-left:auto;
+          border:1px solid var(--border);
+          border-radius:12px;
+          padding:12px 14px;
+          background:#f8fafc;
+        }
+        .totals-row{
+          display:flex;
+          justify-content:space-between;
+          padding:6px 0;
+          font-size: 13px;
+        }
+        .totals-row strong{ font-weight:800; }
+        .totals-grand{
+          border-top:1px dashed var(--border);
+          margin-top:6px;
+          padding-top:10px;
+          font-size: 16px;
+        }
+        .doc-footer{
+          margin-top:18px;
+          padding-top:12px;
+          border-top:1px solid var(--border);
+          color: var(--text-muted);
+          font-size: 12px;
+          display:flex;
+          justify-content:space-between;
+          gap:12px;
+          flex-wrap:wrap;
+        }
+        .sign-grid{
+          display:grid;
+          grid-template-columns: 1fr 1fr;
+          gap:12px;
+          margin-top:14px;
+        }
+        .sign-box{
+          border:1px dashed var(--border);
+          border-radius:12px;
+          padding:12px;
+          min-height:90px;
+          font-size:12px;
+          color: var(--text-muted);
+        }
+        @media print{
+          body{ background:#fff; margin:16px; }
+          .doc-wrap{ border:none; border-radius:0; padding:0; }
+          .btn, .sidebar, .mobile-header, #modalRoot { display:none !important; }
+        }
+      </style>
+    </head>
+    <body class="${bodyClass}">
+      <div class="doc-wrap">
+        <div class="doc-grid">
+          <div class="doc-box">
+            <div style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
+              ${logoHtml}
+              <div class="doc-title">${safe(title)}</div>
+            </div>
+            <div class="doc-meta" style="margin-top:10px;">
+              <div><strong>${safe(company.name || "Votre entreprise")}</strong></div>
+              ${company.address ? `<div>${safe(company.address)}</div>` : ""}
+              ${companyPhoneEmail ? `<div>${companyPhoneEmail}</div>` : ""}
+              ${companyIdsLine ? `<div>${companyIdsLine}</div>` : ""}
+            </div>
+          </div>
+          <div class="doc-box">
+            <div class="doc-section-title">Details</div>
+            <div class="doc-kv">
+              <div class="k">N°</div><div class="v">${safe(number)}</div>
+              <div class="k">Date</div><div class="v">${safe(date)}</div>
+              ${statusRow}
+            </div>
+          </div>
+        </div>
+
+        <div class="doc-box" style="margin-top:12px;">
+          <div class="doc-section-title">Client</div>
+          <div class="doc-kv">
+            <div class="k">Nom</div><div class="v">${safe(client.name || "Client")}</div>
+            <div class="k">Contact</div><div class="v">${safe(client.contact || "-")}</div>
+            <div class="k">Adresse</div><div class="v">${safe(client.address || "-")}</div>
+            <div class="k">Telephone</div><div class="v">${safe(client.phone || "-")}</div>
+            <div class="k">NIF</div><div class="v">${safe(client.nif || "-")}</div>
+            <div class="k">STAT</div><div class="v">${safe(client.stat || "-")}</div>
+            ${referenceRow}
+            ${purchaseOrderRow}
+          </div>
+        </div>
+
+        <div class="doc-box" style="margin-top:12px;">
+          <div class="doc-section-title">Lignes</div>
+          <table class="doc-table" style="width:100%; border-collapse:collapse;">
+            <thead>${tableHead}</thead>
+            <tbody>${isDelivery ? `${rows || emptyRow}${deliveryTotalRow}` : (rows || emptyRow)}</tbody>
+          </table>
+        </div>
+
+        ${totalsHtml}
+
+        ${footerBlocks ? `<div class="doc-footer">${footerBlocks}</div>` : ""}
+        ${responsibleBlock}
+        ${amountWordsHtml}
+
+        <!-- [EDIT START: Signature Placement] -->
+        <div class="sign-grid">
+          <div class="sign-box">Signature client</div>
+          <div class="sign-box" id="signature-entreprise-box" style="display:flex; flex-direction:column; justify-content:flex-end; gap:6px;">
+            <div style="font-weight:600;">Signature entreprise</div>
+            ${signatureImgHtml}
+          </div>
+        </div>
+        <!-- [EDIT END: Signature Placement] -->
+      </div>
+    </body>
+    </html>
+  `;
+}// JavaScript.html - UI actions, modals, and CRUD
+
+// ---------------------------
+// Filters
+// ---------------------------
+function filterClients(){
+  const q = normalizeText(document.getElementById("clientSearch")?.value || "");
+  if (!q) return renderClients(clients);
+  const filtered = clients.filter(c => {
+    return [c.name, c.contact, c.address, c.phone, c.nif, c.stat].some(v => normalizeText(v).includes(q));
+  });
+  renderClients(filtered);
+}
+
+function filterQuotes(){
+  const q = normalizeText(document.getElementById("quoteSearch")?.value || "");
+  const status = normalizeText(document.getElementById("quoteStatusFilter")?.value || "");
+  const filtered = quotes.filter(quote => {
+    if (status && normalizeText(quote.status) !== status) return false;
+    if (!q) return true;
+    const hay = [
+      quote.number, quote.id,
+      getClientName(quote.clientId),
+      formatDate(quote.date),
+      quote.notes
+    ].map(normalizeText).join(" ");
+    return hay.includes(q);
+  });
+  renderQuotes(filtered);
+}
+
+function filterInvoices(){
+  const q = normalizeText(document.getElementById("invoiceSearch")?.value || "");
+  const status = normalizeText(document.getElementById("invoiceStatusFilter")?.value || "");
+  const filtered = invoices.filter(inv => {
+    if (status && normalizeText(inv.status) !== status) return false;
+    if (!q) return true;
+    const hay = [
+      inv.number, inv.id,
+      getClientName(inv.clientId),
+      formatDate(inv.date),
+      inv.notes
+    ].map(normalizeText).join(" ");
+    return hay.includes(q);
+  });
+  renderInvoices(filtered);
+}
+
+function filterDeliveries(){
+  const q = normalizeText(document.getElementById("deliverySearch")?.value || "");
+  const status = normalizeText(document.getElementById("deliveryStatusFilter")?.value || "");
+  const filtered = deliveries.filter(d => {
+    if (status && normalizeText(d.status) !== status) return false;
+    if (!q) return true;
+    const hay = [
+      d.number, d.id,
+      getClientName(d.clientId),
+      formatDate(d.date),
+      d.notes
+    ].map(normalizeText).join(" ");
+    return hay.includes(q);
+  });
+  renderDeliveries(filtered);
+}
+
+function toggleSelectAllClients(checked){
+  document.querySelectorAll(".client-select").forEach(cb => { cb.checked = checked; });
+  updateSelectedClientsState();
+}
+
+function updateSelectedClientsState(){
+  const selected = document.querySelectorAll(".client-select:checked").length;
+  const btn = document.getElementById("deleteSelectedClientsBtn");
+  if (btn) btn.disabled = selected === 0;
+}
+
+// ---------------------------
+// Modal helpers
+// ---------------------------
+function closeModal(){
+  const root = document.getElementById("modalRoot");
+  if (root) root.innerHTML = "";
+}
+
+function openModal(html){
+  const root = document.getElementById("modalRoot");
+  if (root) root.innerHTML = html;
+}
+
+function clientOptions(selectedId){
+  if (!clients.length) {
+    return '<option value="">-- Aucun client --</option>';
+  }
+  return clients.map(c => {
+    const id = String(c.id || "");
+    const sel = id === String(selectedId || "") ? "selected" : "";
+    const label = escapeHtml(c.name || c.id || "");
+    return `<option value="${id}" ${sel}>${label}</option>`;
+  }).join("");
+}
+
+function initModalTotals(type){
+  updateTotals(type);
+}
+
+// ---------------------------
+// Items editor
+// ---------------------------
+window.__editingQuote = null;
+window.__editingInvoice = null;
+window.__editingDelivery = null;
+
+function getEditingObj(type){
+  if (type === "quote") return window.__editingQuote;
+  if (type === "invoice") return window.__editingInvoice;
+  return window.__editingDelivery;
+}
+
+function addItem(type){
+  const obj = getEditingObj(type);
+  if (!obj) return;
+  obj.items.push({ description: "", qty: 1, unitPrice: 0 });
+  renderItems(type);
+}
+
+function removeItem(type, index){
+  const obj = getEditingObj(type);
+  if (!obj) return;
+  obj.items.splice(index, 1);
+  renderItems(type);
+}
+
+function updateItemField(type, index, field, value){
+  const obj = getEditingObj(type);
+  if (!obj || !obj.items[index]) return;
+  if (field === "qty" || field === "unitPrice") {
+    obj.items[index][field] = parseNumber(value);
+  } else {
+    obj.items[index][field] = value;
+  }
+  updateTotals(type);
+}
+
+function renderItems(type){
+  const obj = getEditingObj(type);
+  const container = document.getElementById(`${type}-items`);
+  if (!obj || !container) return;
+  if (!Array.isArray(obj.items)) obj.items = [];
+  if (!obj.items.length) {
+    container.innerHTML = '<div class="text-sm" style="color: var(--text-muted);">Aucun article</div>';
+    updateTotals(type);
+    return;
+  }
+  container.innerHTML = obj.items.map((it, i) => {
+    return `
+      <div class="item-row">
+        <input class="input" placeholder="Désignation" value="${escapeHtml(it.description || "")}" oninput="updateItemField('${type}', ${i}, 'description', this.value)">
+        <input class="input" type="number" step="1" min="0" value="${parseNumber(it.qty || 0)}" oninput="updateItemField('${type}', ${i}, 'qty', this.value)">
+        <input class="input" type="number" step="1" min="0" value="${parseNumber(it.unitPrice || 0)}" oninput="updateItemField('${type}', ${i}, 'unitPrice', this.value)">
+        <div class="text-sm font-semibold">${formatAr(lineTotal(it))}</div>
+        <button type="button" class="btn btn-danger" onclick="removeItem('${type}', ${i})"><i class="fas fa-trash"></i></button>
+      </div>
+    `;
+  }).join("");
+  updateTotals(type);
+}
+
+function updateTotals(type){
+  const obj = getEditingObj(type);
+  if (!obj) return;
+  const discountInput = document.getElementById(type === "quote" ? "q_discount" : "i_discount");
+  const discountRate = parseNumber(discountInput ? discountInput.value : 0);
+  const totals = computeTotals(obj.items || [], discountRate);
+
+  const subtotalEl = document.getElementById(`${type}-subtotal`);
+  const totalEl = document.getElementById(`${type}-total`);
+  if (subtotalEl) subtotalEl.textContent = formatAr(totals.subTotal || 0);
+  if (totalEl) totalEl.textContent = formatAr(totals.totalTTC || 0);
+
+  if (type === "invoice") {
+    const acompteEl = document.getElementById("i_acompte");
+    const dueEl = document.getElementById("invoice-due");
+    const acompte = parseNumber(acompteEl ? acompteEl.value : 0);
+    if (dueEl) dueEl.textContent = formatAr(Math.max(0, totals.totalTTC - acompte));
+  }
+}
+
+// ---------------------------
+// Client modal + CRUD
+// ---------------------------
+window.openClientModal = function(id){
+  const client = id ? clients.find(c => c.id === id) : null;
+  const isEdit = !!client;
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">${isEdit ? "Modifier le client" : "Nouveau client"}</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveClientForm('${isEdit ? client.id : ""}')">
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm">Nom / Société</label>
+              <input id="c_name" class="input" value="${escapeHtml(client?.name || "")}" required>
+            </div>
+            <div>
+              <label class="text-sm">Contact</label>
+              <input id="c_contact" class="input" value="${escapeHtml(client?.contact || "")}">
+            </div>
+            <div>
+              <label class="text-sm">Adresse</label>
+              <input id="c_address" class="input" value="${escapeHtml(client?.address || "")}">
+            </div>
+            <div>
+              <label class="text-sm">Téléphone</label>
+              <input id="c_phone" class="input" value="${escapeHtml(client?.phone || "")}">
+            </div>
+            <div>
+              <label class="text-sm">NIF</label>
+              <input id="c_nif" class="input" value="${escapeHtml(client?.nif || "")}">
+            </div>
+            <div>
+              <label class="text-sm">STAT</label>
+              <input id="c_stat" class="input" value="${escapeHtml(client?.stat || "")}">
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+};
+
+function saveClientForm(id){
+  const name = document.getElementById("c_name").value.trim();
+  if (!name) return alert("Nom/Société requis.");
+  const obj = {
+    id: id || null,
+    name,
+    contact: document.getElementById("c_contact").value.trim(),
+    address: document.getElementById("c_address").value.trim(),
+    phone: document.getElementById("c_phone").value.trim(),
+    nif: document.getElementById("c_nif").value.trim(),
+    stat: document.getElementById("c_stat").value.trim()
+  };
+  setLoading(true, "Enregistrement...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      closeModal();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement client: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .saveClient(token, obj);
+}
+
+// ---------------------------
+// Quote modal + CRUD
+// ---------------------------
+window.openQuoteModal = function(id){
+  const quote = id ? quotes.find(q => q.id === id) : null;
+  const isEdit = !!quote;
+  window.__editingQuote = {
+    id: quote?.id || null,
+    items: (quote?.items || []).map(it => ({ description: it.description || "", qty: parseNumber(it.qty || 0), unitPrice: parseNumber(it.unitPrice || 0) })),
+    convertedTo: quote?.convertedTo || {}
+  };
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">${isEdit ? "Modifier le devis" : "Nouveau devis"}</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveQuoteForm('${isEdit ? quote.id : ""}')">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="text-sm">Numéro</label>
+              <input id="q_number" class="input" value="${escapeHtml(quote?.number || "")}" placeholder="Auto">
+            </div>
+            <div>
+              <label class="text-sm">Date</label>
+              <input id="q_date" type="date" class="input" value="${escapeHtml(quote?.date || todayISO())}">
+            </div>
+            <div>
+              <label class="text-sm">Client</label>
+              <select id="q_client" class="input">${clientOptions(quote?.clientId || "")}</select>
+            </div>
+            <div>
+              <label class="text-sm">Statut</label>
+              <select id="q_status" class="input">
+                <option value="draft" ${quote?.status === "draft" ? "selected" : ""}>Brouillon</option>
+                <option value="sent" ${quote?.status === "sent" ? "selected" : ""}>Envoyé</option>
+                <option value="converted" ${quote?.status === "converted" ? "selected" : ""}>Converti</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm">Remise (%)</label>
+              <input id="q_discount" type="number" step="0.01" min="0" class="input" value="${parseNumber(quote?.discountRate || 0)}" oninput="updateTotals('quote')">
+            </div>
+            <div>
+              <label class="text-sm">Acompte</label>
+              <input id="q_acompte" type="number" step="1" min="0" class="input" value="${parseNumber(quote?.acompte || 0)}">
+            </div>
+          </div>
+          <div class="mt-4">
+            <div class="flex justify-between items-center mb-2">
+              <h4 class="font-semibold">Articles</h4>
+              <button type="button" class="btn btn-secondary" onclick="addItem('quote')"><i class="fas fa-plus"></i> Ajouter</button>
+            </div>
+            <div id="quote-items"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div>
+              <label class="text-sm">Notes</label>
+              <textarea id="q_notes" class="input" rows="3">${escapeHtml(quote?.notes || "")}</textarea>
+            </div>
+            <div class="md:col-span-2">
+              <div class="flex justify-end gap-8 text-sm">
+                <div>Sous-total: <span id="quote-subtotal">0</span></div>
+                <div>Total TTC: <span id="quote-total">0</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  renderItems("quote");
+  initModalTotals("quote");
+};
+
+function saveQuoteForm(id){
+  const number = document.getElementById("q_number").value.trim();
+  const date = document.getElementById("q_date").value || todayISO();
+  const clientId = document.getElementById("q_client").value;
+  if (!clientId) return alert("Sélectionnez un client.");
+  const status = document.getElementById("q_status").value;
+  const notes = document.getElementById("q_notes").value.trim();
+  const discountRate = parseNumber(document.getElementById("q_discount").value || 0);
+  const acompte = parseNumber(document.getElementById("q_acompte").value || 0);
+  const items = window.__editingQuote.items || [];
+  if (items.some(it => !(it.description || "").trim())) return alert("Chaque ligne doit avoir une désignation.");
+  const totals = computeTotals(items, discountRate);
+  const obj = {
+    id: id || null,
+    number: number || "",
+    clientId,
+    date,
+    status,
+    items,
+    notes,
+    totals,
+    convertedTo: window.__editingQuote.convertedTo || {},
+    acompte,
+    discountRate
+  };
+  setLoading(true, "Enregistrement...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      closeModal();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement devis: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .saveQuote(token, obj);
+}
+
+// ---------------------------
+// Invoice modal + CRUD
+// ---------------------------
+window.openInvoiceModal = function(id){
+  const inv = id ? invoices.find(i => i.id === id) : null;
+  const isEdit = !!inv;
+  window.__editingInvoice = {
+    id: inv?.id || null,
+    items: (inv?.items || []).map(it => ({ description: it.description || "", qty: parseNumber(it.qty || 0), unitPrice: parseNumber(it.unitPrice || 0) })),
+    sourceQuoteId: inv?.sourceQuoteId || null
+  };
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">${isEdit ? "Modifier la facture" : "Nouvelle facture"}</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveInvoiceForm('${isEdit ? inv.id : ""}')">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="text-sm">Numéro</label>
+              <input id="i_number" class="input" value="${escapeHtml(inv?.number || "")}" placeholder="Auto">
+            </div>
+            <div>
+              <label class="text-sm">Date</label>
+              <input id="i_date" type="date" class="input" value="${escapeHtml(inv?.date || todayISO())}">
+            </div>
+            <div>
+              <label class="text-sm">Client</label>
+              <select id="i_client" class="input">${clientOptions(inv?.clientId || "")}</select>
+            </div>
+            <div>
+              <label class="text-sm">Statut</label>
+              <select id="i_status" class="input">
+                <option value="pending" ${inv?.status === "pending" ? "selected" : ""}>En attente</option>
+                <option value="partial" ${inv?.status === "partial" ? "selected" : ""}>Partiel</option>
+                <option value="paid" ${inv?.status === "paid" ? "selected" : ""}>Payée</option>
+                <option value="overdue" ${inv?.status === "overdue" ? "selected" : ""}>En retard</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm">Remise (%)</label>
+              <input id="i_discount" type="number" step="0.01" min="0" class="input" value="${parseNumber(inv?.discountRate || 0)}" oninput="updateTotals('invoice')">
+            </div>
+            <div>
+              <label class="text-sm">Acompte</label>
+              <input id="i_acompte" type="number" step="1" min="0" class="input" value="${parseNumber(inv?.acompte || 0)}" oninput="updateTotals('invoice')">
+            </div>
+          </div>
+          <div class="mt-4">
+            <div class="flex justify-between items-center mb-2">
+              <h4 class="font-semibold">Articles</h4>
+              <button type="button" class="btn btn-secondary" onclick="addItem('invoice')"><i class="fas fa-plus"></i> Ajouter</button>
+            </div>
+            <div id="invoice-items"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div>
+              <label class="text-sm">Notes</label>
+              <textarea id="i_notes" class="input" rows="3">${escapeHtml(inv?.notes || "")}</textarea>
+            </div>
+            <div class="md:col-span-2">
+              <div class="flex justify-end gap-8 text-sm">
+                <div>Sous-total: <span id="invoice-subtotal">0</span></div>
+                <div>Total TTC: <span id="invoice-total">0</span></div>
+                <div>Reste dû: <span id="invoice-due">0</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  renderItems("invoice");
+  initModalTotals("invoice");
+};
+
+function saveInvoiceForm(id){
+  const number = document.getElementById("i_number").value.trim();
+  const date = document.getElementById("i_date").value || todayISO();
+  const clientId = document.getElementById("i_client").value;
+  if (!clientId) return alert("Sélectionnez un client.");
+  const status = document.getElementById("i_status").value;
+  const notes = document.getElementById("i_notes").value.trim();
+  const discountRate = parseNumber(document.getElementById("i_discount").value || 0);
+  const acompte = parseNumber(document.getElementById("i_acompte").value || 0);
+  const items = window.__editingInvoice.items || [];
+  if (items.some(it => !(it.description || "").trim())) return alert("Chaque ligne doit avoir une désignation.");
+  const totals = computeTotals(items, discountRate);
+  const obj = {
+    id: id || null,
+    number: number || "",
+    clientId,
+    date,
+    status,
+    sourceQuoteId: window.__editingInvoice.sourceQuoteId || null,
+    items,
+    notes,
+    totals,
+    acompte,
+    discountRate
+  };
+  setLoading(true, "Enregistrement...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      closeModal();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement facture: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .saveInvoice(token, obj);
+}
+
+// ---------------------------
+// Delivery modal + CRUD
+// ---------------------------
+window.openDeliveryModal = function(id){
+  const d = id ? deliveries.find(x => x.id === id) : null;
+  const isEdit = !!d;
+  window.__editingDelivery = {
+    id: d?.id || null,
+    items: (d?.items || []).map(it => ({ description: it.description || "", qty: parseNumber(it.qty || 0), unitPrice: parseNumber(it.unitPrice || 0) })),
+    sourceQuoteId: d?.sourceQuoteId || null,
+    sourceInvoiceId: d?.sourceInvoiceId || null
+  };
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">${isEdit ? "Modifier le BL" : "Nouveau BL"}</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); saveDeliveryForm('${isEdit ? d.id : ""}')">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="text-sm">Numéro</label>
+              <input id="d_number" class="input" value="${escapeHtml(d?.number || "")}" placeholder="Auto">
+            </div>
+            <div>
+              <label class="text-sm">Date</label>
+              <input id="d_date" type="date" class="input" value="${escapeHtml(d?.date || todayISO())}">
+            </div>
+            <div>
+              <label class="text-sm">Client</label>
+              <select id="d_client" class="input">${clientOptions(d?.clientId || "")}</select>
+            </div>
+            <div>
+              <label class="text-sm">Statut</label>
+              <select id="d_status" class="input">
+                <option value="draft" ${d?.status === "draft" ? "selected" : ""}>Brouillon</option>
+                <option value="sent" ${d?.status === "sent" ? "selected" : ""}>Envoyé</option>
+                <option value="delivered" ${d?.status === "delivered" ? "selected" : ""}>Livré</option>
+              </select>
+            </div>
+          </div>
+          <div class="mt-4">
+            <div class="flex justify-between items-center mb-2">
+              <h4 class="font-semibold">Articles</h4>
+              <button type="button" class="btn btn-secondary" onclick="addItem('delivery')"><i class="fas fa-plus"></i> Ajouter</button>
+            </div>
+            <div id="delivery-items"></div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <label class="text-sm">Notes</label>
+              <textarea id="d_notes" class="input" rows="3">${escapeHtml(d?.notes || "")}</textarea>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Enregistrer</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  renderItems("delivery");
+};
+
+function saveDeliveryForm(id){
+  const number = document.getElementById("d_number").value.trim();
+  const date = document.getElementById("d_date").value || todayISO();
+  const clientId = document.getElementById("d_client").value;
+  if (!clientId) return alert("Sélectionnez un client.");
+  const status = document.getElementById("d_status").value;
+  const notes = document.getElementById("d_notes").value.trim();
+  const items = window.__editingDelivery.items || [];
+  if (items.some(it => !(it.description || "").trim())) return alert("Chaque ligne doit avoir une désignation.");
+  const obj = {
+    id: id || null,
+    number: number || "",
+    clientId,
+    date,
+    status,
+    sourceQuoteId: window.__editingDelivery.sourceQuoteId || null,
+    sourceInvoiceId: window.__editingDelivery.sourceInvoiceId || null,
+    items,
+    notes
+  };
+  setLoading(true, "Enregistrement...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      closeModal();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur enregistrement BL: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .saveDelivery(token, obj);
+}
+
+// ---------------------------
+// Delete + bulk actions
+// ---------------------------
+function deleteSelectedClients(){
+  const ids = Array.from(document.querySelectorAll(".client-select:checked")).map(el => el.dataset.id);
+  if (!ids.length) return;
+  if (!confirm("Supprimer les clients sélectionnés ?")) return;
+  setLoading(true, "Suppression...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  let remaining = ids.length;
+  let failed = false;
+  ids.forEach(id => {
+    google.script.run
+      .withSuccessHandler(function(){
+        if (failed) return;
+        remaining--;
+        if (remaining === 0) {
+          loadAllData();
+          setLoading(false);
+        }
+      })
+      .withFailureHandler(function(err){
+        if (failed) return;
+        failed = true;
+        alert("Erreur suppression: " + (err && err.message ? err.message : err));
+        setLoading(false);
+      })
+      .deleteClient(token, id);
+  });
+}
+
+function importContactsCsvPrompt(){
+  alert("Import CSV non implémenté dans cette version.");
+}
+
+function mergeDuplicateClients(){
+  alert("Fusion des doublons non implémentée dans cette version.");
+}
+
+window.deleteClient = function(id){
+  if (!confirm("Supprimer ce client ?")) return;
+  setLoading(true, "Suppression...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur suppression: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .deleteClient(token, id);
+};
+
+window.deleteQuote = function(id){
+  if (!confirm("Supprimer ce devis ?")) return;
+  setLoading(true, "Suppression...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur suppression: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .deleteQuote(token, id);
+};
+
+window.deleteInvoice = function(id){
+  if (!confirm("Supprimer cette facture ?")) return;
+  setLoading(true, "Suppression...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur suppression: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .deleteInvoice(token, id);
+};
+
+window.deleteDelivery = function(id){
+  if (!confirm("Supprimer ce bon de livraison ?")) return;
+  setLoading(true, "Suppression...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur suppression: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .deleteDelivery(token, id);
+};
+
+window.convertQuoteToInvoice = function(quoteId){
+  if (!confirm("Convertir ce devis en facture ?")) return;
+  setLoading(true, "Conversion...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      showPage("invoices");
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur conversion: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .convertQuoteToInvoice(token, quoteId);
+};
+
+window.convertQuoteToDelivery = function(){
+  alert("Veuillez convertir le devis en facture avant de créer le BL.");
+};
+
+window.convertInvoiceToDelivery = function(invoiceId){
+  if (!confirm("Convertir cette facture en BL ?")) return;
+  setLoading(true, "Conversion...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(){
+      loadAllData();
+      showPage("deliveries");
+      setLoading(false);
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur conversion: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .convertInvoiceToDelivery(token, invoiceId);
+};
+
+if (typeof initAuth === "function") {
+  initAuth();
+}
+
+// ==========================================
+// VENTE RAPIDE (POS) — Logique complète
+// ==========================================
+
+function processQuickSale() {
+  const rawText = document.getElementById('pos-raw-input').value;
+  if (!rawText.trim()) return alert("Le champ est vide !");
+
+  const data = {
+    clientId:   (rawText.match(/Client\s*#(\d+)/) || [])[1] || "",
+    clientName: (rawText.match(/Client\s*:\s*(.+)/) || [])[1]?.trim() || "",
+    contact:    (rawText.match(/Contact\s*:\s*(.+)/) || [])[1]?.trim() || "",
+    lieu:       (rawText.match(/Lieu\s*:\s*(.+)/) || [])[1]?.trim() || "",
+    items:      (rawText.match(/Commandes\s*:\s*([\s\S]*?)(?=Total)/) || [])[1]?.trim() || "",
+    total:      Number((rawText.match(/Total\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0),
+    avance:     Number((rawText.match(/Avance\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0),
+    reste:      Number((rawText.match(/Reste(?:\s*à\s*payer)?\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0)
+  };
+
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  setLoading(true, "Enregistrement de la vente...");
+  google.script.run
+    .withSuccessHandler(function() {
+      setLoading(false);
+      printPOSReceipt(data);
+      refreshPOSData();
+      document.getElementById('pos-raw-input').value = "";
+    })
+    .withFailureHandler(function(err) {
+      setLoading(false);
+      alert("Erreur : " + err);
+    })
+    .saveQuickSale(token, data);
+}
+
+function refreshPOSData() {
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  // Stats
+  google.script.run
+    .withSuccessHandler(function(stats) {
+      document.getElementById('pos-stat-total').textContent   = formatAr(stats.totalVendu);
+      document.getElementById('pos-stat-avance').textContent  = formatAr(stats.totalAvance);
+      document.getElementById('pos-stat-reste').textContent   = formatAr(stats.totalReste);
+      document.getElementById('pos-stat-count').textContent   = stats.count + " / " + stats.countRecouvrement;
+    })
+    .withFailureHandler(function(e){ console.warn("POS stats error:", e); })
+    .getQuickSalesStats(token);
+  // Liste du mois
+  google.script.run
+    .withSuccessHandler(function(list) {
+      renderPOSSalesTable(list);
+      renderPOSRecouvrementList(list);
+    })
+    .withFailureHandler(function(e){ console.warn("POS list error:", e); })
+    .getQuickSalesList(token);
+}
+
+function renderPOSSalesTable(list) {
+  const tbody = document.getElementById('pos-sales-table');
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  if (!list || !list.length) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:2rem;">Aucune vente ce mois</td></tr>`;
+    return;
+  }
+  list.slice().reverse().forEach(function(s) {
+    const d = new Date(s.date);
+    const dateStr = isNaN(d) ? "" : d.toLocaleDateString('fr-FR');
+    const resteBadge = s.reste > 0
+      ? `<span class="badge badge-overdue">${formatAr(s.reste)}</span>`
+      : `<span class="badge badge-paid">Soldé</span>`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${dateStr}</td>
+      <td><strong>${escapeHtml(s.clientName || "")}</strong><br><small style="color:var(--text-muted);">#${escapeHtml(String(s.clientId||""))}</small></td>
+      <td>${escapeHtml(s.contact || "")}</td>
+      <td>${escapeHtml(s.lieu || "")}</td>
+      <td class="font-semibold">${formatAr(s.total)}</td>
+      <td style="color:#059669;">${formatAr(s.avance)}</td>
+      <td>${resteBadge}</td>
+      <td>
+        ${s.reste > 0 ? `<button class="btn btn-success" onclick="openValidatePayment(${s.rowIndex}, ${s.reste}, '${escapeHtml(s.clientName||"")}')"><i class="fas fa-coins"></i> Valider paiement</button>` : ""}
+        <button class="btn btn-secondary" onclick="printPOSReceipt(${JSON.stringify(s).replace(/"/g,'&quot;')})"><i class="fas fa-print"></i></button>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderPOSRecouvrementList(list) {
+  const container = document.getElementById('pos-recouvrement-list');
+  if (!container) return;
+  const pending = (list || []).filter(s => s.reste > 0);
+  if (!pending.length) {
+    container.innerHTML = `<p style="color:var(--text-muted);font-size:.875rem;">Aucun recouvrement en attente ce mois 🎉</p>`;
+    return;
+  }
+  container.innerHTML = pending.map(function(s) {
+    const d = new Date(s.date);
+    const dateStr = isNaN(d) ? "" : d.toLocaleDateString('fr-FR');
+    return `
+    <div style="border:1px solid var(--border);border-radius:.75rem;padding:1rem;display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap;">
+      <div>
+        <div class="font-semibold">${escapeHtml(s.clientName||"")} <span style="color:var(--text-muted);font-size:.8rem;">#${escapeHtml(String(s.clientId||""))}</span></div>
+        <div style="font-size:.8rem;color:var(--text-muted);">${escapeHtml(s.contact||"")} — ${dateStr}</div>
+        <div style="margin-top:.25rem;"><span class="badge badge-overdue">Reste : ${formatAr(s.reste)}</span></div>
+      </div>
+      <button class="btn btn-success" onclick="openValidatePayment(${s.rowIndex}, ${s.reste}, '${escapeHtml(s.clientName||"")}')">
+        <i class="fas fa-coins"></i> Valider
+      </button>
+    </div>`;
+  }).join("");
+}
+
+function openValidatePayment(rowIndex, resteActuel, clientName) {
+  const montant = prompt(
+    `Valider un paiement pour ${clientName}\nReste actuel : ${Number(resteActuel).toLocaleString('fr-FR')} Ar\n\nMontant encaissé (Ar) :`,
+    resteActuel
+  );
+  if (montant === null) return;
+  const val = Number(String(montant).replace(/\s/g,""));
+  if (isNaN(val) || val <= 0) return alert("Montant invalide.");
+  const token = getAuthTokenOrLogin();
+  if (!token) return;
+  setLoading(true, "Enregistrement du paiement...");
+  google.script.run
+    .withSuccessHandler(function(res) {
+      setLoading(false);
+      alert(res.nouveauReste <= 0 ? "✅ Vente entièrement soldée !" : `✅ Paiement enregistré. Reste : ${Number(res.nouveauReste).toLocaleString('fr-FR')} Ar`);
+      refreshPOSData();
+    })
+    .withFailureHandler(function(err) {
+      setLoading(false);
+      alert("Erreur : " + err);
+    })
+    .validatePayment(token, rowIndex, val);
+}
+
+function printPOSReceipt(d) {
+  const company = getCompanyInfo();
+  const safe = (v) => escapeHtml(String(v ?? ""));
+  const dateStr = new Date().toLocaleString('fr-FR');
+
+  const logoHtml = company && company.logoDataUrl
+    ? `<img src="${safe(company.logoDataUrl)}" alt="Logo" style="max-height:60px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;">`
+    : "";
+  const companyName = (company && company.name) ? safe(company.name) : "";
+  const companyAddr = (company && company.address) ? `<div>${safe(company.address)}</div>` : "";
+  const companyPhone = (company && company.phone) ? `<div>Tél : ${safe(company.phone)}</div>` : "";
+  const companyNif = (company && company.nif) ? `NIF: ${safe(company.nif)}` : "";
+  const companyStat = (company && company.stat) ? `STAT: ${safe(company.stat)}` : "";
+  const companyIds = [companyNif, companyStat].filter(Boolean).join(" — ");
+
+  const total = Number(d.total||0);
+  const avance = Number(d.avance||0);
+  const reste = Number(d.reste||0);
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) { alert("Veuillez autoriser les pop-ups."); return; }
+  printWindow.document.write(`
+    <html>
+      <head>
+        <title>Ticket de vente</title>
+        <style>
+          body { font-family:'Courier New',monospace; width:80mm; font-size:12px; margin:0; padding:10px; }
+          .center { text-align:center; }
+          .bold { font-weight:bold; }
+          .line { border-bottom:1px dashed #000; margin:8px 0; }
+          table { width:100%; }
+          td { padding:2px 0; vertical-align:top; }
+          pre { font-family:inherit; white-space:pre-wrap; margin:4px 0; }
+        </style>
+      </head>
+      <body>
+        <div class="center">
+          ${logoHtml}
+          ${companyName ? `<div class="bold" style="font-size:15px;">${companyName}</div>` : ""}
+          ${companyAddr}
+          ${companyPhone}
+          ${companyIds ? `<div>${companyIds}</div>` : ""}
+        </div>
+        <div class="line"></div>
+        <div class="center bold">TICKET DE VENTE</div>
+        <div class="center" style="font-size:11px;">${dateStr}</div>
+        <div class="line"></div>
+        <div><strong>Client :</strong> ${safe(d.clientName||"")} ${d.clientId ? "(#"+safe(String(d.clientId))+")" : ""}</div>
+        ${d.contact ? `<div><strong>Contact :</strong> ${safe(d.contact)}</div>` : ""}
+        ${d.lieu ? `<div><strong>Lieu :</strong> ${safe(d.lieu)}</div>` : ""}
+        <div class="line"></div>
+        <div class="bold">COMMANDES :</div>
+        <pre>${safe(d.items||"")}</pre>
+        <div class="line"></div>
+        <table>
+          <tr><td>TOTAL :</td><td align="right" class="bold">${total.toLocaleString('fr-FR')} Ar</td></tr>
+          <tr><td>AVANCE :</td><td align="right">${avance.toLocaleString('fr-FR')} Ar</td></tr>
+          <tr class="bold"><td>RESTE :</td><td align="right" style="color:${reste>0?'#cc0000':'#006600'};">${reste.toLocaleString('fr-FR')} Ar</td></tr>
+        </table>
+        <div class="line"></div>
+        <div class="center" style="font-size:11px;">Merci de votre confiance !</div>
+        <script>window.onload=function(){window.print();window.close();}<\/script>
+      </body>
+    </html>
+  `);
+  printWindow.document.close();
+}
+
+// Charger les données POS quand on navigue sur la page
+(function() {
+  const origShowPage = window.showPage;
+  if (typeof origShowPage === "function") {
+    window.showPage = function(page) {
+      origShowPage(page);
+      if (page === "pos-system") refreshPOSData();
+    };
+  }
+})();
+
+
+</script>
 </body>
 </html>
 
