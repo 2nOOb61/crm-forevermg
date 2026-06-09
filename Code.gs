@@ -21,8 +21,9 @@ const CONFIG = {
 function doGet(e) {
   // Mode facturation (FacturePro)
   if (e && e.parameter && e.parameter.interface === "1") {
-    return HtmlService.createHtmlOutputFromFile('Interface')
-      .setTitle('FOREVER MG — Facturation');
+    return HtmlService.createHtmlOutputFromFile('facturation')
+      .setTitle('FOREVER MG — Facturation')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   if (e && e.parameter && e.parameter.action) {
     return handleSyncGet_(e);
@@ -836,7 +837,7 @@ function createFirstAdmin(username, password, displayName) {
   if (hasUsers()) return { ok: false, error: 'Des utilisateurs existent déjà.' };
   var u = String(username || '').trim();
   var p = String(password || '');
-  if (!u || !p) return { ok: false, error: 'Nom d’utilisateur et mot de passe requis.' };
+  if (!u || !p) return { ok: false, error: "Nom d’utilisateur et mot de passe requis." };
   var meta = getUsersMeta();
   var salt = makeSalt();
   var hash = hashPassword(p, salt);
@@ -1922,8 +1923,8 @@ function showInterface() {
 function saveCompanySettings(token, companyData) {
   const user = requireAuth(token);
   if (user.role !== 'admin') throw new Error("Accès refusé");
-  
-  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  const ss = getSpreadsheet();
   let sheet = ss.getSheetByName("Settings");
   if (!sheet) {
     sheet = ss.insertSheet("Settings");
@@ -1951,7 +1952,7 @@ function saveCompanySettings(token, companyData) {
 // [ADD START: Company Signature]
 function getCompanySignature(token) {
   requireAuth(token);
-  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var ss = getSpreadsheet();
   var sheet = ss.getSheetByName("Settings");
   if (!sheet) return null;
   var data = sheet.getDataRange().getValues();
@@ -1969,7 +1970,7 @@ function setCompanySignature(token, signatureDataUrl) {
   var user = requireAuth(token);
   assertCan_(user.role, "settings.write");
 
-  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var ss = getSpreadsheet();
   var sheet = ss.getSheetByName("Settings");
   if (!sheet) {
     sheet = ss.insertSheet("Settings");

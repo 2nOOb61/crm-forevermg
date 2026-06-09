@@ -726,8 +726,12 @@ function demoData(action, payload) {
 //  FACTURATION
 // ============================================================
 function openFacturation() {
-  try { localStorage.setItem('facturepro_gas_url', window.GAS_URL || ""); } catch(e) {}
-  window.open('facturation.html', '_blank');
+  if (!GAS_URL || GAS_URL === "VOTRE_URL_GAS_ICI") {
+    showToast("⚠️ Configurez GAS_URL pour accéder à la facturation");
+    return;
+  }
+  try { localStorage.setItem('facturepro_gas_url', GAS_URL); } catch(e) {}
+  window.open(GAS_URL + '?interface=1', '_blank');
 }
 
 // ============================================================
