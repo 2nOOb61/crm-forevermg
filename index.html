@@ -676,11 +676,10 @@ async function api(action, payload = {}) {
     const r = await fetch(GAS_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ action, ...payload })
+      body: JSON.stringify({ cmd: action, ...payload }) // "cmd" évite le conflit avec le champ "Prochaine action"
     });
     return await r.json();
   } catch(e) {
-    // Mode démo si GAS non configuré
     return demoData(action, payload);
   }
 }

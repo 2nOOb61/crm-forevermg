@@ -26,10 +26,10 @@ function doGet(e) {
 function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
-    const action  = payload.action;
+    const cmd     = payload.cmd; // "cmd" au lieu de "action" pour éviter le conflit avec le champ "Prochaine action"
     let result;
 
-    switch (action) {
+    switch (cmd) {
       // --- DEVIS ---
       case "getDevis":       result = getDevis(payload);       break;
       case "createDevis":    result = createDevis(payload);    break;
@@ -47,7 +47,7 @@ function doPost(e) {
       case "sendEmail":            result = sendEmail(payload);           break;
       case "createDraft":          result = createDraft(payload);         break;
       default:
-        result = { ok: false, error: "Action inconnue : " + action };
+        result = { ok: false, error: "Commande inconnue : " + cmd };
     }
 
     return ContentService
