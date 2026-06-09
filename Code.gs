@@ -42,9 +42,10 @@ function doPost(e) {
       // --- DASHBOARD ---
       case "getDashboard":   result = getDashboard();          break;
       // --- GMAIL ---
-      case "getGmailLeads":  result = getGmailLeads();         break;
-      case "sendEmail":      result = sendEmail(payload);      break;
-      case "createDraft":    result = createDraft(payload);    break;
+      case "getGmailLeads":        result = getGmailLeads();              break;
+      case "createDevisFromEmail": result = createDevisFromEmail(payload);break;
+      case "sendEmail":            result = sendEmail(payload);           break;
+      case "createDraft":          result = createDraft(payload);         break;
       default:
         result = { ok: false, error: "Action inconnue : " + action };
     }
@@ -386,44 +387,141 @@ function getDashboard() {
 }
 
 // ============================================================
-//  MODULE GMAIL
+//  MODULE GMAIL — v2 (mots-clés étendus + 2 boîtes + doublons)
 // ============================================================
+
+// Tous les mots-clés commerciaux détectés automatiquement
+const GMAIL_KEYWORDS = [
+  // Devis & prix
+  "devis","cotation","proforma","pro-forma","offre de prix","tarif","prix",
+  // Commandes
+  "commande","purchase order","bon de commande","PO","order",
+  // Demandes
+  "demande","demande de","requête","besoin","souhait",
+  // Produits FOREVER MG
+  "impression","sticker","plaque","signalétique","signalisation",
+  "lampion","claustra","étiquette","badge","kakémono","roll-up",
+  "photo","vidéo","tournage","shooting","maquette","design",
+  "personnalisé","logo","broderie","gravure","sérigraphie",
+  // Facturation
+  "facture","facturation","paiement","règlement","acompte","solde",
+  // Urgences
+  "urgent","urgence","asap","dès que possible","rapidement",
+  // Livraison
+  "livraison","délai","réception",
+  // Relances
+  "relance","suivi","rappel","sans réponse"
+];
+
+// Catégorisation automatique par mots-clés dans le sujet
+function categorizeEmail(subject, snippet) {
+  const txt = (subject + " " + snippet).toLowerCase();
+  if (/devis|cotation|proforma|offre de prix|tarif/.test(txt))    return "Demande devis";
+  if (/commande|purchase order|bon de commande|\bpo\b|order/.test(txt)) return "Commande";
+  if (/facture|facturation|proforma/.test(txt))                   return "Facturation";
+  if (/paiement|règlement|acompte|solde/.test(txt))               return "Paiement";
+  if (/livraison|délai|réception/.test(txt))                      return "Livraison";
+  if (/relance|rappel|sans réponse|suivi/.test(txt))              return "Relance";
+  if (/urgent|urgence|asap/.test(txt))                            return "Urgent";
+  if (/réclamation|problème|erreur|anomalie/.test(txt))           return "Réclamation";
+  return "Autre";
+}
+
+// Priorité automatique
+function autoPriority(subject, snippet, isImportant) {
+  const txt = (subject + " " + snippet).toLowerCase();
+  if (/urgent|urgence|asap|immédiat/.test(txt)) return "Urgent";
+  if (isImportant)                               return "Haute";
+  if (/devis|commande|proforma|facture/.test(txt)) return "Haute";
+  return "Moyenne";
+}
+
+// Clé de déduplication : expéditeur normalisé + sujet normalisé
+function dedupeKey(from, subject) {
+  const emailMatch = from.match(/<(.+?)>/);
+  const email = emailMatch ? emailMatch[1].toLowerCase() : from.toLowerCase();
+  const subj  = subject.toLowerCase()
+    .replace(/^(re|fwd|fw|tr|aw)[\s:]+/gi, "")
+    .replace(/\s+/g, " ").trim()
+    .substring(0, 60);
+  return email + "|" + subj;
+}
+
 function getGmailLeads() {
   try {
-    const queries = [
-      "subject:devis is:unread",
-      "subject:demande is:unread",
-      "subject:commande is:unread",
-      "subject:PO is:unread",
-      "subject:urgent is:unread",
-      "subject:prix is:unread",
-      "subject:cotation is:unread"
+    // Construire une requête globale OR avec tous les mots-clés
+    const kwQuery = GMAIL_KEYWORDS
+      .map(k => k.includes(" ") ? `"${k}"` : `subject:${k}`)
+      .join(" OR ");
+
+    // On cherche dans les 2 boîtes via l'alias (GAS opère sur le compte connecté)
+    // + on cible aussi les e-mails envoyés À commercial ou contact
+    const baseQueries = [
+      `(${kwQuery}) newer_than:90d`,
+      `(${kwQuery}) to:(commercial4evermg@gmail.com OR contact4evermg@gmail.com) newer_than:90d`,
+      `is:important newer_than:30d`,
+      `is:unread is:important newer_than:30d`
     ];
 
-    const seen    = {};
+    const seen    = {}; // dédup par threadId
+    const dedupeS = {}; // dédup par expéditeur+sujet (doublons cross-boîtes)
     const results = [];
+    const doublons = [];
 
-    queries.forEach(q => {
-      const threads = GmailApp.search(q, 0, 10);
+    baseQueries.forEach(q => {
+      let threads = [];
+      try { threads = GmailApp.search(q, 0, 25); } catch(e) {}
+
       threads.forEach(thread => {
         if (seen[thread.getId()]) return;
         seen[thread.getId()] = true;
-        const msg  = thread.getMessages()[thread.getMessageCount() - 1];
-        const from = msg.getFrom();
+
+        const msgs    = thread.getMessages();
+        const lastMsg = msgs[msgs.length - 1];
+        const firstMsg= msgs[0];
+        const from    = firstMsg.getFrom();
+        const subject = thread.getFirstMessageSubject();
+        const snippet = firstMsg.getPlainBody().substring(0, 300);
+        const dk      = dedupeKey(from, subject);
+        const categorie = categorizeEmail(subject, snippet);
+        const priorite  = autoPriority(subject, snippet, thread.isImportant());
+
+        // Détection doublons (même expéditeur + sujet similaire)
+        const isDuplicate = !!dedupeS[dk];
+        if (isDuplicate) {
+          doublons.push({ threadId: thread.getId(), subject, from, note: "Doublon détecté" });
+          return; // on ne l'ajoute pas aux résultats principaux
+        }
+        dedupeS[dk] = true;
+
+        // Détecter si l'e-mail cible contact ou commercial
+        const toRecipients = lastMsg.getTo() + " " + lastMsg.getCc();
+        const boite = toRecipients.includes("commercial4evermg") ? "commercial" :
+                      toRecipients.includes("contact4evermg")    ? "contact"    : "principale";
+
         results.push({
-          threadId:  thread.getId(),
-          subject:   thread.getFirstMessageSubject(),
+          threadId:   thread.getId(),
+          subject,
           from,
-          date:      Utilities.formatDate(msg.getDate(), "Indian/Antananarivo", "dd/MM/yyyy HH:mm"),
-          snippet:   thread.getMessages()[0].getPlainBody().substring(0, 200),
-          unread:    thread.isUnread(),
-          important: thread.isImportant()
+          boite,
+          categorie,
+          priorite,
+          date:       Utilities.formatDate(lastMsg.getDate(), "Indian/Antananarivo", "dd/MM/yyyy HH:mm"),
+          snippet:    snippet.substring(0, 250),
+          unread:     thread.isUnread(),
+          important:  thread.isImportant(),
+          msgCount:   msgs.length,
+          isDuplicate: false
         });
       });
     });
 
-    // Trier : importants + non lus en tête
-    results.sort((a,b) => {
+    // Trier : urgents > importants > non lus > date
+    const prioOrder = { "Urgent": 0, "Haute": 1, "Moyenne": 2, "Basse": 3 };
+    results.sort((a, b) => {
+      const pa = prioOrder[a.priorite] ?? 9;
+      const pb = prioOrder[b.priorite] ?? 9;
+      if (pa !== pb) return pa - pb;
       if (a.important && !b.important) return -1;
       if (!a.important && b.important) return  1;
       if (a.unread && !b.unread) return -1;
@@ -431,9 +529,59 @@ function getGmailLeads() {
       return 0;
     });
 
-    return { ok: true, data: results.slice(0, 20) };
+    return {
+      ok:       true,
+      data:     results.slice(0, 40),
+      doublons: doublons,
+      stats: {
+        total:    results.length,
+        unread:   results.filter(r => r.unread).length,
+        urgent:   results.filter(r => r.priorite === "Urgent").length,
+        doublons: doublons.length,
+        parBoite: {
+          commercial: results.filter(r => r.boite === "commercial").length,
+          contact:    results.filter(r => r.boite === "contact").length,
+          principale: results.filter(r => r.boite === "principale").length
+        },
+        parCategorie: GMAIL_KEYWORDS.reduce((acc, _) => acc, {
+          "Demande devis": results.filter(r => r.categorie === "Demande devis").length,
+          "Commande":      results.filter(r => r.categorie === "Commande").length,
+          "Facturation":   results.filter(r => r.categorie === "Facturation").length,
+          "Urgent":        results.filter(r => r.categorie === "Urgent").length,
+          "Relance":       results.filter(r => r.categorie === "Relance").length,
+          "Autre":         results.filter(r => r.categorie === "Autre").length
+        })
+      }
+    };
   } catch(err) {
     return { ok: false, error: "Gmail inaccessible : " + err.message };
+  }
+}
+
+// Créer un devis directement depuis un e-mail Gmail
+function createDevisFromEmail(payload) {
+  try {
+    const thread  = GmailApp.getThreadById(payload.threadId);
+    if (!thread) return { ok: false, error: "Thread introuvable." };
+    const msg     = thread.getMessages()[0];
+    const from    = msg.getFrom();
+    const emailMatch = from.match(/<(.+?)>/);
+    const email   = emailMatch ? emailMatch[1] : from;
+    const nameMatch  = from.match(/^([^<]+)</);
+    const name    = nameMatch ? nameMatch[1].trim() : from;
+
+    return createDevis({
+      client:      payload.client      || name,
+      emailClient: payload.emailClient || email,
+      produit:     payload.produit     || thread.getFirstMessageSubject(),
+      categorie:   payload.categorie   || "Demande devis",
+      statut:      "Ouvert",
+      priorite:    payload.priorite    || "Haute",
+      commentaire: "Créé depuis Gmail — " + thread.getFirstMessageSubject(),
+      action:      "Répondre et envoyer devis"
+    });
+  } catch(err) {
+    return { ok: false, error: err.message };
   }
 }
 

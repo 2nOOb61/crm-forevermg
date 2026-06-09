@@ -455,8 +455,46 @@ textarea{resize:vertical;min-height:70px}
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
       Actualiser
     </button>
-    <span style="font-size:12px;color:var(--text-3)" id="gmailInfo">Mots-clés : devis, demande, urgent, PO…</span>
+    <select id="gmailCatFilter" onchange="filterGmailDisplay()">
+      <option value="tous">Toutes catégories</option>
+      <option value="Demande devis">Demande devis</option>
+      <option value="Commande">Commande</option>
+      <option value="Facturation">Facturation</option>
+      <option value="Urgent">Urgent</option>
+      <option value="Relance">Relance</option>
+      <option value="Paiement">Paiement</option>
+      <option value="Livraison">Livraison</option>
+      <option value="Autre">Autre</option>
+    </select>
+    <select id="gmailBoiteFilter" onchange="filterGmailDisplay()">
+      <option value="tous">Toutes boîtes</option>
+      <option value="commercial">commercial4evermg</option>
+      <option value="contact">contact4evermg</option>
+    </select>
+    <span style="font-size:12px;color:var(--text-3)" id="gmailInfo">Cliquez sur Actualiser</span>
   </div>
+
+  <!-- Stats bar -->
+  <div id="gmailStats" style="display:none;margin-bottom:12px">
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">
+      <div class="kpi"><div class="kpi-label">Total</div><div class="kpi-val blue" id="gs-total">0</div></div>
+      <div class="kpi"><div class="kpi-label">Non lus</div><div class="kpi-val orange" id="gs-unread">0</div></div>
+      <div class="kpi"><div class="kpi-label">Urgents</div><div class="kpi-val red" id="gs-urgent">0</div></div>
+      <div class="kpi"><div class="kpi-label">Doublons</div><div class="kpi-val amber" id="gs-doublons">0</div></div>
+      <div class="kpi"><div class="kpi-label">commercial@</div><div class="kpi-val green" id="gs-commercial">0</div></div>
+      <div class="kpi"><div class="kpi-label">contact@</div><div class="kpi-val green" id="gs-contact">0</div></div>
+    </div>
+  </div>
+
+  <!-- Doublons alert -->
+  <div id="gmailDoublonsAlert" style="display:none" class="alert alert-amber" style="margin-bottom:12px">
+    <span class="alert-icon">⚠️</span>
+    <div class="alert-body">
+      <div class="alert-title" id="gmailDoublonsTitle">Doublons détectés</div>
+      <div class="alert-sub" id="gmailDoublonsList"></div>
+    </div>
+  </div>
+
   <div class="card">
     <div class="card-body" id="gmailList">
       <div class="empty"><div class="empty-icon">📬</div><div class="empty-text">Cliquez sur Actualiser pour charger les e-mails</div></div>
@@ -618,7 +656,7 @@ textarea{resize:vertical;min-height:70px}
 // ============================================================
 //  CONFIG — Remplacez par votre URL de déploiement GAS
 // ============================================================
-const GAS_URL = "https://script.google.com/macros/s/AKfycbxB0TRHMOCYb87P2ZWfxEZj-0EDrpH0kUbPy2b35ufGrhJ8K5PVJVcDq4N7HSoiJlczQA/exec"; // Ex: https://script.google.com/macros/s/xxxxx/exec
+const GAS_URL = "VOTRE_URL_GAS_ICI"; // Ex: https://script.google.com/macros/s/xxxxx/exec
 
 // ============================================================
 //  STATE
@@ -982,34 +1020,88 @@ async function quickUpdatePO(id, statut) {
 }
 
 // ============================================================
-//  GMAIL
+//  GMAIL v2
 // ============================================================
 async function loadGmail() {
-  document.getElementById("gmailList").innerHTML = `<div class="empty"><span class="spinner" style="border-color:rgba(26,74,58,.2);border-top-color:var(--green)"></span></div>`;
+  document.getElementById("gmailList").innerHTML = `<div class="empty"><span class="spinner" style="border-color:rgba(26,74,58,.2);border-top-color:var(--green)"></span><div style="margin-top:10px;font-size:13px;color:var(--text-3)">Analyse de toutes les boîtes…</div></div>`;
+  document.getElementById("gmailStats").style.display = "none";
   const res = await api("getGmailLeads");
   if (!res.ok) {
-    document.getElementById("gmailList").innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res.error||"Erreur Gmail")}</div></div>`;
-    document.getElementById("gmailInfo").textContent = "Configurez l'URL GAS pour activer Gmail";
+    document.getElementById("gmailList").innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res.error||"Erreur Gmail")}<br><small>Configurez l'URL GAS pour activer Gmail</small></div></div>`;
     return;
   }
   STATE.gmail = res.data || [];
-  if (!STATE.gmail.length) {
-    document.getElementById("gmailList").innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Aucun e-mail commercial trouvé</div></div>`;
+
+  // Stats
+  if (res.stats) {
+    document.getElementById("gs-total").textContent     = res.stats.total;
+    document.getElementById("gs-unread").textContent    = res.stats.unread;
+    document.getElementById("gs-urgent").textContent    = res.stats.urgent;
+    document.getElementById("gs-doublons").textContent  = res.stats.doublons;
+    document.getElementById("gs-commercial").textContent= res.stats.parBoite?.commercial || 0;
+    document.getElementById("gs-contact").textContent   = res.stats.parBoite?.contact    || 0;
+    document.getElementById("gmailStats").style.display = "block";
+    document.getElementById("gmailInfo").textContent    =
+      `${res.stats.total} e-mail(s) · ${res.stats.unread} non lus · ${res.stats.doublons} doublons`;
+  }
+
+  // Doublons alert
+  if (res.doublons && res.doublons.length > 0) {
+    document.getElementById("gmailDoublonsAlert").style.display = "flex";
+    document.getElementById("gmailDoublonsTitle").textContent   = `${res.doublons.length} doublon(s) détecté(s) et masqué(s)`;
+    document.getElementById("gmailDoublonsList").textContent    =
+      res.doublons.map(d => `${d.from} — ${d.subject}`).join(" · ");
+  } else {
+    document.getElementById("gmailDoublonsAlert").style.display = "none";
+  }
+
+  filterGmailDisplay();
+}
+
+function filterGmailDisplay() {
+  const cat   = document.getElementById("gmailCatFilter")?.value   || "tous";
+  const boite = document.getElementById("gmailBoiteFilter")?.value || "tous";
+  let rows = STATE.gmail;
+  if (cat   !== "tous") rows = rows.filter(m => m.categorie === cat);
+  if (boite !== "tous") rows = rows.filter(m => m.boite     === boite);
+  renderGmailList(rows);
+}
+
+const CAT_BADGE = {
+  "Demande devis": "badge-orange", "Commande":    "badge-green",
+  "Facturation":   "badge-blue",   "Urgent":      "badge-red",
+  "Relance":       "badge-amber",  "Paiement":    "badge-amber",
+  "Livraison":     "badge-blue",   "Réclamation": "badge-red",
+  "Autre":         "badge-gray"
+};
+const BOITE_BADGE = {
+  "commercial": "badge-green", "contact": "badge-blue", "principale": "badge-gray"
+};
+
+function renderGmailList(rows) {
+  const el = document.getElementById("gmailList");
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><div class="empty-text">Aucun e-mail dans ce filtre</div></div>`;
     return;
   }
-  document.getElementById("gmailInfo").textContent = STATE.gmail.length + " e-mail(s) chargé(s)";
-  document.getElementById("gmailList").innerHTML = STATE.gmail.map((m, i) => `
-    <div class="gmail-item ${m.important ? 'important' : m.unread ? 'unread' : ''}" onclick="precomposeGmail(${i})">
+  el.innerHTML = rows.map((m, i) => `
+    <div class="gmail-item ${m.priorite==='Urgent'?'important':m.unread?'unread':''}">
       <div class="gmail-meta">
         <span class="gmail-from">${esc(m.from||"")}</span>
         <span class="gmail-date">${esc(m.date||"")}</span>
       </div>
       <div class="gmail-subject">${esc(m.subject||"")}</div>
-      <div class="gmail-snippet">${esc(m.snippet||"")}</div>
-      <div style="display:flex;gap:6px;margin-top:6px">
-        ${m.important ? `<span class="badge badge-red">Important</span>` : ""}
-        ${m.unread    ? `<span class="badge badge-orange">Non lu</span>` : `<span class="badge badge-gray">Lu</span>`}
-        <button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="event.stopPropagation();precomposeGmail(${i})">Répondre →</button>
+      <div class="gmail-snippet">${esc((m.snippet||"").substring(0,150))}</div>
+      <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;align-items:center">
+        <span class="badge ${CAT_BADGE[m.categorie]||'badge-gray'}">${esc(m.categorie||"")}</span>
+        <span class="badge ${BOITE_BADGE[m.boite]||'badge-gray'}" title="Boîte de réception">${esc(m.boite||"")}@</span>
+        ${m.priorite==="Urgent" ? `<span class="badge badge-red">🔴 Urgent</span>` : ""}
+        ${m.unread   ? `<span class="badge badge-orange">Non lu</span>` : `<span class="badge badge-gray">Lu</span>`}
+        ${m.msgCount > 1 ? `<span class="badge badge-gray">${m.msgCount} messages</span>` : ""}
+        <div style="margin-left:auto;display:flex;gap:4px">
+          <button class="btn btn-ghost btn-sm" onclick="precomposeGmail(${STATE.gmail.indexOf(m)})">✉ Répondre</button>
+          <button class="btn btn-primary btn-sm" onclick="quickCreateDevis(${STATE.gmail.indexOf(m)})">+ Devis</button>
+        </div>
       </div>
     </div>`).join("");
 }
@@ -1020,8 +1112,30 @@ function precomposeGmail(i) {
   const emailMatch = (m.from || "").match(/<(.+?)>/);
   document.getElementById("emailTo").value      = emailMatch ? emailMatch[1] : m.from || "";
   document.getElementById("emailSubject").value = "Re : " + (m.subject || "");
-  document.getElementById("emailBody").value    = "\n\n---\nMessage original de : " + m.from + "\nDate : " + m.date + "\n\n" + m.snippet;
+  document.getElementById("emailBody").value    = "\n\n---\nDe : " + m.from + "\nDate : " + m.date + "\n\n" + (m.snippet||"").substring(0,300);
   switchSection("email", document.querySelector("[data-section='email']"));
+}
+
+async function quickCreateDevis(i) {
+  const m = STATE.gmail[i];
+  if (!m) return;
+  const emailMatch = (m.from || "").match(/<(.+?)>/);
+  const nameMatch  = (m.from || "").match(/^([^<]+)</);
+  const res = await api("createDevisFromEmail", {
+    threadId:   m.threadId,
+    client:     nameMatch  ? nameMatch[1].trim() : m.from,
+    emailClient:emailMatch ? emailMatch[1]        : m.from,
+    produit:    m.subject,
+    categorie:  m.categorie,
+    priorite:   m.priorite
+  });
+  if (res.ok) {
+    showToast("✓ Devis créé — " + res.id);
+    loadDevis();
+    loadDashboard();
+  } else {
+    showToast("Erreur : " + res.error);
+  }
 }
 
 // ============================================================
