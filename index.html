@@ -730,7 +730,10 @@ function openFacturation() {
     showToast("⚠️ Configurez GAS_URL pour accéder à la facturation");
     return;
   }
-  try { localStorage.setItem('facturepro_gas_url', GAS_URL); } catch(e) {}
+  try {
+    localStorage.setItem('facturepro_gas_url', GAS_URL);
+    localStorage.setItem('facturepro_crm_url', window.location.href);
+  } catch(e) {}
   window.open(GAS_URL + '?interface=1', '_blank');
 }
 
