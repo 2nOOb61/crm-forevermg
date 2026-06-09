@@ -253,7 +253,7 @@
 </head>
 <body>
 <div id="crm-topbar" style="position:fixed;top:0;left:0;right:0;height:48px;background:#1a4a3a;color:#fff;display:flex;align-items:center;padding:0 16px;gap:12px;z-index:1000;">
-  <button onclick="window.location.href='index.html'" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;">← CRM</button>
+  <button onclick="window.location.href = window.GAS_URL || 'index.html'" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:4px 12px;border-radius:6px;cursor:pointer;font-size:13px;">← CRM</button>
   <span style="font-weight:700;font-size:16px;letter-spacing:-.2px;">4EVER<span style="color:#e8834a">MG</span> — Facturation</span>
   <span id="fact-gas-status" style="margin-left:auto;font-size:11px;opacity:.7;">GAS: non connecté</span>
 </div>
