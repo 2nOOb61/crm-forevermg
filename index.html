@@ -260,6 +260,47 @@ textarea{resize:vertical;min-height:70px}
 </style>
 </head>
 <body>
+
+<!-- ═══════════ LOGIN ═══════════ -->
+<div id="crm-login" style="position:fixed;inset:0;z-index:3000;display:flex;align-items:center;justify-content:center;background:radial-gradient(circle at 20% 20%,#e8f4ef 0%,#f1f5f9 55%,#dfe7e3 100%);padding:20px;">
+  <div style="width:min(420px,94vw);background:#fff;border-radius:16px;padding:28px;box-shadow:0 24px 60px rgba(15,23,42,.18);">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#1a4a3a" stroke-width="2" stroke-linecap="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+      <span style="font-size:22px;font-weight:800;color:#1a4a3a;letter-spacing:-.5px;">4EVER<span style="color:#e8834a">MG</span></span>
+    </div>
+
+    <!-- Connexion -->
+    <div id="crm-login-block">
+      <div style="color:#64748b;font-size:14px;margin-bottom:18px;">Connexion au CRM</div>
+      <form id="crm-login-form" autocomplete="on">
+        <div class="form-group" style="margin-bottom:12px;">
+          <label>Nom d'utilisateur</label>
+          <input id="li-user" autocomplete="username" placeholder="ex. Gino">
+        </div>
+        <div class="form-group" style="margin-bottom:8px;">
+          <label>Mot de passe</label>
+          <input id="li-pass" type="password" autocomplete="current-password">
+        </div>
+        <div id="li-error" style="color:#dc2626;font-size:13px;min-height:18px;margin-bottom:8px;"></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;">Se connecter</button>
+      </form>
+    </div>
+
+    <!-- Création 1er admin -->
+    <div id="crm-setup-block" style="display:none;">
+      <div style="color:#64748b;font-size:14px;margin-bottom:18px;">Aucun utilisateur. Créez le compte administrateur.</div>
+      <form id="crm-setup-form" autocomplete="on">
+        <div class="form-group" style="margin-bottom:12px;"><label>Nom d'utilisateur</label><input id="su-user" autocomplete="username"></div>
+        <div class="form-group" style="margin-bottom:12px;"><label>Nom affiché</label><input id="su-display"></div>
+        <div class="form-group" style="margin-bottom:12px;"><label>Mot de passe</label><input id="su-pass" type="password" autocomplete="new-password"></div>
+        <div class="form-group" style="margin-bottom:8px;"><label>Confirmer le mot de passe</label><input id="su-confirm" type="password" autocomplete="new-password"></div>
+        <div id="su-error" style="color:#dc2626;font-size:13px;min-height:18px;margin-bottom:8px;"></div>
+        <button class="btn btn-primary" type="submit" style="width:100%;justify-content:center;">Créer l'administrateur</button>
+      </form>
+    </div>
+  </div>
+</div>
+
 <div class="app">
 
 <!-- TOPBAR -->
@@ -272,6 +313,10 @@ textarea{resize:vertical;min-height:70px}
   <div class="topbar-sync" id="syncStatus">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">Chargement…</span>
+  </div>
+  <div id="crm-user-box" style="display:none;align-items:center;gap:8px;margin-left:14px;">
+    <span id="crm-user-label" style="font-size:12px;color:#fff;opacity:.9;font-weight:600;"></span>
+    <button onclick="crmLogout()" title="Déconnexion" style="background:rgba(255,255,255,.16);border:none;color:#fff;padding:5px 10px;border-radius:6px;cursor:pointer;font-size:12px;">Déconnexion</button>
   </div>
 </div>
 
@@ -300,6 +345,10 @@ textarea{resize:vertical;min-height:70px}
   <button class="nav-btn" data-section="facturation" onclick="openFacturation()">
     <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
     Facturation
+  </button>
+  <button class="nav-btn" data-section="users" id="nav-users" style="display:none;" onclick="switchSection('users',this)">
+    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Utilisateurs
   </button>
 </nav>
 
@@ -559,7 +608,63 @@ textarea{resize:vertical;min-height:70px}
     </div>
   </div>
 </section>
+
+<!-- ═══════════ UTILISATEURS ═══════════ -->
+<section class="section" id="sec-users">
+  <div class="page-title">
+    <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+    Gestion des utilisateurs
+  </div>
+  <div class="toolbar">
+    <div style="margin-left:auto"></div>
+    <button class="btn btn-primary" onclick="openUserModal()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+      Nouvel utilisateur
+    </button>
+  </div>
+  <div class="card">
+    <div class="card-body tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Utilisateur</th><th>Nom affiché</th><th>Email</th><th>Rôle</th><th>Statut</th><th>Actions</th></tr>
+        </thead>
+        <tbody id="usersTbody">
+          <tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:32px">Chargement…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
 </main>
+
+<!-- ═══════════ MODAL UTILISATEUR ═══════════ -->
+<div class="overlay" id="modalUser">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="userModalTitle">Nouvel utilisateur</div>
+    <button class="modal-close" onclick="closeUserModal()">✕</button>
+  </div>
+  <div class="form-group" style="margin-bottom:10px"><label>Nom d'utilisateur *</label><input id="u-username" autocomplete="off"></div>
+  <div class="form-group" style="margin-bottom:10px"><label>Nom affiché</label><input id="u-display"></div>
+  <div class="form-group" style="margin-bottom:10px"><label>Email</label><input id="u-email" type="email" autocomplete="off"></div>
+  <div class="form-group" style="margin-bottom:10px"><label>Rôle</label>
+    <select id="u-role">
+      <option value="admin">Administrateur</option>
+      <option value="manager">Manager</option>
+      <option value="sales">Commercial</option>
+      <option value="accounting">Comptabilité</option>
+      <option value="logistics">Logistique</option>
+      <option value="viewer">Lecture seule</option>
+    </select>
+  </div>
+  <div class="form-group" style="margin-bottom:10px"><label>Mot de passe <span id="u-pass-hint" style="color:var(--text-3);font-weight:400"></span></label><input id="u-password" type="password" autocomplete="new-password"></div>
+  <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text-2)"><input type="checkbox" id="u-active" checked style="width:auto"> Compte actif</label>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeUserModal()">Annuler</button>
+    <button class="btn btn-primary" id="userSaveBtn" onclick="saveUserForm()">Enregistrer</button>
+  </div>
+</div>
+</div>
 
 <!-- ═══════════ MODAL NOUVEAU DEVIS ═══════════ -->
 <div class="overlay" id="modalDevis">
@@ -684,6 +789,7 @@ let STATE = {
   devis: [],
   po:    [],
   gmail: [],
+  users: [],
   loading: false
 };
 
@@ -695,9 +801,11 @@ async function api(action, payload = {}) {
     const r = await fetch(GAS_URL, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      body: JSON.stringify({ cmd: action, ...payload }) // "cmd" évite le conflit avec le champ "Prochaine action"
+      body: JSON.stringify({ cmd: action, token: getToken(), ...payload }) // "cmd" évite le conflit avec le champ "Prochaine action"
     });
-    return await r.json();
+    const json = await r.json();
+    if (json && json.error === "AUTH_REQUIRED") { onAuthExpired(); }
+    return json;
   } catch(e) {
     return demoData(action, payload);
   }
@@ -738,6 +846,175 @@ function demoData(action, payload) {
 }
 
 // ============================================================
+//  AUTHENTIFICATION
+// ============================================================
+const AUTH_TOKEN_KEY = "crm_auth_token";
+const AUTH_USER_KEY  = "crm_auth_user";
+
+function getToken()    { try { return localStorage.getItem(AUTH_TOKEN_KEY) || ""; } catch(e){ return ""; } }
+function getAuthUser() { try { return JSON.parse(localStorage.getItem(AUTH_USER_KEY) || "null"); } catch(e){ return null; } }
+function setSession(token, user) {
+  try { localStorage.setItem(AUTH_TOKEN_KEY, token); localStorage.setItem(AUTH_USER_KEY, JSON.stringify(user || {})); } catch(e){}
+}
+function clearSession() {
+  try { localStorage.removeItem(AUTH_TOKEN_KEY); localStorage.removeItem(AUTH_USER_KEY); } catch(e){}
+}
+function setLoginError(t){ const e=document.getElementById("li-error"); if(e) e.textContent=t||""; }
+function setSetupError(t){ const e=document.getElementById("su-error"); if(e) e.textContent=t||""; }
+
+function showLogin(mode) {
+  document.getElementById("crm-login").style.display = "flex";
+  const ub = document.getElementById("crm-user-box"); if (ub) ub.style.display = "none";
+  const lb = document.getElementById("crm-login-block");
+  const sb = document.getElementById("crm-setup-block");
+  if (mode === "setup") { lb.style.display = "none"; sb.style.display = "block"; }
+  else                  { lb.style.display = "block"; sb.style.display = "none"; }
+  setLoginError(""); setSetupError("");
+}
+function hideLogin() {
+  document.getElementById("crm-login").style.display = "none";
+  const ub = document.getElementById("crm-user-box"); if (ub) ub.style.display = "flex";
+}
+
+function applyAuthUI() {
+  const user = getAuthUser();
+  const label = document.getElementById("crm-user-label");
+  if (label) label.textContent = user ? (user.displayName || user.username || "") : "";
+  const isAdmin = String((user && user.role) || "").toLowerCase() === "admin";
+  const navUsers = document.getElementById("nav-users");
+  if (navUsers) navUsers.style.display = isAdmin ? "" : "none";
+}
+
+function onAuthExpired() { clearSession(); showLogin("login"); }
+
+async function bootAuth() {
+  const token = getToken();
+  if (token) {
+    const res = await api("checkAuth");
+    if (res && res.ok && res.user) { setSession(token, res.user); enterApp(); return; }
+    clearSession();
+  }
+  const hu = await api("hasUsers");
+  showLogin(hu && hu.hasUsers === false ? "setup" : "login");
+}
+
+function enterApp() {
+  hideLogin();
+  applyAuthUI();
+  loadDashboard();
+}
+
+async function submitLogin() {
+  const username = (document.getElementById("li-user").value||"").trim();
+  const password = document.getElementById("li-pass").value||"";
+  if (!username || !password) { setLoginError("Identifiant et mot de passe requis."); return; }
+  setLoginError("");
+  const res = await api("login", { username, password });
+  if (res && res.ok && res.token) {
+    setSession(res.token, res.user || { username });
+    document.getElementById("li-pass").value = "";
+    enterApp();
+  } else {
+    setLoginError(res && res.error ? res.error : "Connexion impossible.");
+  }
+}
+
+async function submitSetup() {
+  const username    = (document.getElementById("su-user").value||"").trim();
+  const displayName = (document.getElementById("su-display").value||"").trim();
+  const password    = document.getElementById("su-pass").value||"";
+  const confirm     = document.getElementById("su-confirm").value||"";
+  if (!username || !password) { setSetupError("Identifiant et mot de passe requis."); return; }
+  if (password !== confirm)   { setSetupError("Les mots de passe ne correspondent pas."); return; }
+  setSetupError("");
+  const res = await api("createFirstAdmin", { username, password, displayName });
+  if (res && res.ok && res.token) {
+    setSession(res.token, res.user || { username, displayName, role:"admin" });
+    enterApp();
+  } else {
+    setSetupError(res && res.error ? res.error : "Création impossible.");
+  }
+}
+
+function crmLogout() { clearSession(); showLogin("login"); }
+
+// ============================================================
+//  GESTION DES UTILISATEURS
+// ============================================================
+const ROLE_LABELS = { admin:"Administrateur", manager:"Manager", sales:"Commercial", accounting:"Comptabilité", logistics:"Logistique", viewer:"Lecture seule" };
+let __editingUserLookup = null;
+
+async function loadUsers() {
+  const tb = document.getElementById("usersTbody");
+  tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:32px">Chargement…</td></tr>`;
+  const res = await api("getUsers");
+  if (!res || !res.ok) {
+    tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red);padding:32px">${esc(res && res.error || "Erreur")}</td></tr>`;
+    return;
+  }
+  STATE.users = res.users || [];
+  renderUsers(STATE.users);
+}
+
+function renderUsers(users) {
+  const tb = document.getElementById("usersTbody");
+  if (!users.length) { tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-3);padding:32px">Aucun utilisateur</td></tr>`; return; }
+  tb.innerHTML = users.map(u => {
+    const lookup = esc(u.email || u.username || "");
+    return `<tr>
+      <td style="font-weight:600">${esc(u.username||"")}</td>
+      <td>${esc(u.displayName||"")}</td>
+      <td>${esc(u.email||"")}</td>
+      <td><span class="badge badge-blue">${esc(ROLE_LABELS[u.role]||u.role||"")}</span></td>
+      <td>${u.active ? '<span class="badge badge-green">Actif</span>' : '<span class="badge badge-gray">Inactif</span>'}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="editUser('${lookup}')">Éditer</button></td>
+    </tr>`;
+  }).join("");
+}
+
+function editUser(lookup) {
+  const u = (STATE.users||[]).find(x => (x.email || x.username) === lookup);
+  if (u) openUserModal(u);
+}
+
+function openUserModal(u) {
+  __editingUserLookup = u ? (u.email || u.username) : null;
+  document.getElementById("userModalTitle").textContent = u ? "Modifier l'utilisateur" : "Nouvel utilisateur";
+  document.getElementById("u-username").value = u ? (u.username||"") : "";
+  document.getElementById("u-display").value   = u ? (u.displayName||"") : "";
+  document.getElementById("u-email").value     = u ? (u.email||"") : "";
+  document.getElementById("u-role").value      = u ? (u.role||"viewer") : "sales";
+  document.getElementById("u-password").value  = "";
+  document.getElementById("u-active").checked  = u ? !!u.active : true;
+  document.getElementById("u-pass-hint").textContent = u ? "(laisser vide pour ne pas changer)" : "*";
+  document.getElementById("u-username").readOnly = !!u;
+  document.getElementById("modalUser").classList.add("open");
+}
+function closeUserModal() { document.getElementById("modalUser").classList.remove("open"); }
+
+async function saveUserForm() {
+  const username = (document.getElementById("u-username").value||"").trim();
+  const password = document.getElementById("u-password").value||"";
+  if (!username) { showToast("Nom d'utilisateur requis"); return; }
+  if (!__editingUserLookup && !password) { showToast("Mot de passe requis pour un nouvel utilisateur"); return; }
+  const user = {
+    lookup:      __editingUserLookup || "",
+    username,
+    displayName: (document.getElementById("u-display").value||"").trim(),
+    email:       (document.getElementById("u-email").value||"").trim(),
+    role:        document.getElementById("u-role").value,
+    active:      document.getElementById("u-active").checked,
+    password
+  };
+  const btn = document.getElementById("userSaveBtn");
+  btn.disabled = true; btn.innerHTML = `<span class="spinner"></span>`;
+  const res = await api("saveUser", { user });
+  btn.disabled = false; btn.textContent = "Enregistrer";
+  if (res && res.ok) { closeUserModal(); showToast("Utilisateur enregistré"); loadUsers(); }
+  else showToast("Erreur : " + (res && res.error || "inconnue"));
+}
+
+// ============================================================
 //  FACTURATION
 // ============================================================
 function openFacturation() {
@@ -764,6 +1041,7 @@ function switchSection(id, btn) {
   if (id === "dashboard") loadDashboard();
   if (id === "devis")     loadDevis();
   if (id === "po")        loadPO();
+  if (id === "users")     loadUsers();
 }
 
 // ============================================================
@@ -1463,11 +1741,11 @@ document.querySelectorAll(".overlay").forEach(ov => {
 //  INIT
 // ============================================================
 document.addEventListener("DOMContentLoaded", () => {
-  if (GAS_URL === "VOTRE_URL_GAS_ICI") {
-    setStatus("Mode démo", true);
-    showToast("⚠️ Mode démo — configurez GAS_URL pour connecter Sheets");
-  }
-  loadDashboard();
+  const lf = document.getElementById("crm-login-form");
+  if (lf) lf.addEventListener("submit", e => { e.preventDefault(); submitLogin(); });
+  const sf = document.getElementById("crm-setup-form");
+  if (sf) sf.addEventListener("submit", e => { e.preventDefault(); submitSetup(); });
+  bootAuth();
 });
 </script>
 </body>

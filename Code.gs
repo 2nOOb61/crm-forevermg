@@ -60,8 +60,27 @@ function doPost(e) {
   try {
     const payload = JSON.parse(e.postData.contents);
     const cmd     = payload.cmd;
+
+    // --- Authentification : token requis sauf pour les commandes publiques ---
+    const PUBLIC_CMDS = ["login", "hasUsers", "createFirstAdmin"];
+    if (PUBLIC_CMDS.indexOf(cmd) === -1) {
+      const authUser = validateToken(payload.token);
+      if (!authUser) {
+        return ContentService
+          .createTextOutput(JSON.stringify({ ok: false, error: "AUTH_REQUIRED" }))
+          .setMimeType(ContentService.MimeType.JSON);
+      }
+      payload.__user = authUser; // utilisateur authentifié disponible aux handlers
+    }
+
     let result;
     switch (cmd) {
+      case "login":                result = authenticate(payload.username, payload.password); break;
+      case "hasUsers":             result = { ok: true, hasUsers: hasUsers() };               break;
+      case "createFirstAdmin":     result = createFirstAdmin(payload.username, payload.password, payload.displayName); break;
+      case "checkAuth":            result = { ok: true, user: payload.__user };               break;
+      case "getUsers":             result = crmGetUsers(payload);          break;
+      case "saveUser":             result = crmSaveUser(payload);          break;
       case "getDevis":             result = getDevis(payload);             break;
       case "createDevis":          result = createDevis(payload);          break;
       case "updateDevis":          result = updateDevis(payload);          break;
@@ -90,6 +109,28 @@ function doPost(e) {
 
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// --- Gestion utilisateurs côté CRM (réutilise listUsers/saveUser, admin only) ---
+function crmGetUsers(payload) {
+  try {
+    return { ok: true, users: listUsers(payload.token) };
+  } catch (e) {
+    return { ok: false, error: e.message === "FORBIDDEN" ? "Réservé aux administrateurs." : e.message };
+  }
+}
+
+function crmSaveUser(payload) {
+  try {
+    var res = saveUser(payload.token, payload.user || {});
+    if (res && res.error) {
+      var map = { EMAIL_REQUIRED: "Email/identifiant requis.", PASSWORD_REQUIRED: "Mot de passe requis pour un nouvel utilisateur." };
+      res.error = map[res.error] || res.error;
+    }
+    return res;
+  } catch (e) {
+    return { ok: false, error: e.message === "FORBIDDEN" ? "Réservé aux administrateurs." : e.message };
+  }
 }
 
 // ============================================================
