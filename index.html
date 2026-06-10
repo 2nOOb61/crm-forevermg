@@ -885,8 +885,18 @@ function removeDevisItem(i) {
 }
 function updateDevisItem(i, field, value) {
   if (!__devisItems[i]) return;
-  __devisItems[i][field] = (field === "qty" || field === "pu") ? (parseFloat(value) || 0) : value;
-  renderDevisItems();
+  // IMPORTANT : ne PAS re-render pendant la saisie (sinon perte de focus + latence).
+  // On met juste à jour le modèle, et seulement les totaux affichés si besoin.
+  if (field === "qty" || field === "pu") {
+    __devisItems[i][field] = parseFloat(value) || 0;
+    const it = __devisItems[i];
+    const lineEl = document.getElementById("d-line-total-" + i);
+    if (lineEl) lineEl.textContent = fmtAr(Math.round((it.qty || 0) * (it.pu || 0))) + " Ar";
+    const totalEl = document.getElementById("d-total-display");
+    if (totalEl) totalEl.textContent = fmtAr(devisItemsTotal()) + " Ar";
+  } else {
+    __devisItems[i][field] = value;
+  }
 }
 function renderDevisItems() {
   const container = document.getElementById("d-items-list");
@@ -905,7 +915,7 @@ function renderDevisItems() {
       <input class="input" style="padding:6px 8px;font-size:13px" placeholder="Désignation" value="${esc(it.desc||'')}" oninput="updateDevisItem(${i},'desc',this.value)">
       <input class="input" style="padding:6px 8px;font-size:13px" type="number" min="0" value="${it.qty||1}" oninput="updateDevisItem(${i},'qty',this.value)">
       <input class="input" style="padding:6px 8px;font-size:13px" type="number" min="0" value="${it.pu||0}" oninput="updateDevisItem(${i},'pu',this.value)">
-      <div style="text-align:right;font-size:13px;font-weight:600;white-space:nowrap">${fmtAr(lt)} Ar</div>
+      <div id="d-line-total-${i}" style="text-align:right;font-size:13px;font-weight:600;white-space:nowrap">${fmtAr(lt)} Ar</div>
       <button type="button" onclick="removeDevisItem(${i})" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 6px;cursor:pointer;color:var(--red);font-size:12px">✕</button>
     </div>`;
   }).join("");
