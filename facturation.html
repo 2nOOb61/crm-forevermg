@@ -488,7 +488,10 @@
       <div id="page-quotes" class="page hidden">
         <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Devis</h2>
-          <button class="btn btn-primary" onclick="openQuoteModal()"><i class="fas fa-plus"></i> Nouveau devis</button>
+          <div style="display:flex; gap:.5rem;">
+            <button class="btn btn-secondary" onclick="refreshQuotesFromCrm(this)" title="Recharger les devis (inclut ceux créés depuis le CRM)"><i class="fas fa-sync-alt"></i> Actualiser</button>
+            <button class="btn btn-primary" onclick="openQuoteModal()"><i class="fas fa-plus"></i> Nouveau devis</button>
+          </div>
         </div>
         <div class="card">
           <div class="mb-4 flex flex-wrap gap-4">
@@ -956,6 +959,16 @@ document.addEventListener('DOMContentLoaded', function() {
     })
     .getAllDataText(token);
 }
+
+    // Bouton "Actualiser" de la page Devis — recharge tout (les devis
+    // créés/synchronisés depuis le CRM sont inclus dans getAllDataText).
+    window.refreshQuotesFromCrm = function(btn){
+      const icon = btn ? btn.querySelector("i") : null;
+      if (icon) icon.classList.add("fa-spin");
+      const stop = function(){ if (icon) icon.classList.remove("fa-spin"); };
+      setTimeout(stop, 8000); // sécurité anti-spinner bloqué
+      loadAllData(function(){ renderAll(); stop(); });
+    };
 
     // Initialisation après authentification
     function startApp(){
