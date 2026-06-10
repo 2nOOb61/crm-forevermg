@@ -703,8 +703,22 @@ textarea{resize:vertical;min-height:70px}
         <span></span>
       </div>
       <div id="d-items-list"></div>
-      <div style="display:flex;justify-content:flex-end;margin-top:8px;padding-top:8px;border-top:1px solid var(--border)">
-        <span style="font-weight:700;font-size:14px">Total TTC : <span id="d-total-display" style="color:var(--orange)">0 Ar</span></span>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div class="form-group" style="margin:0">
+          <label style="font-size:11px">Remise (%)</label>
+          <input id="d-remise" type="number" min="0" max="100" step="0.01" value="0" oninput="renderDevisTotals()">
+        </div>
+        <div class="form-group" style="margin:0">
+          <label style="font-size:11px">Acompte (Ar)</label>
+          <input id="d-acompte" type="number" min="0" step="1" value="0" oninput="renderDevisTotals()">
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:2px;align-items:flex-end;margin-top:8px;font-size:13px">
+        <div style="color:var(--text-2)">Sous-total : <span id="d-subtotal-display">0 Ar</span></div>
+        <div id="d-remise-line" style="display:none;color:var(--text-2)">Remise : <span id="d-remise-display">0 Ar</span></div>
+        <div style="font-weight:700;font-size:14px">Total TTC : <span id="d-total-display" style="color:var(--orange)">0 Ar</span></div>
+        <div id="d-acompte-line" style="display:none;color:var(--text-2)">Acompte : <span id="d-acompte-display">0 Ar</span></div>
+        <div id="d-reste-line" style="display:none;font-weight:700;color:var(--green)">Reste à payer : <span id="d-reste-display">0 Ar</span></div>
       </div>
     </div>
     <div class="form-group">
@@ -1182,25 +1196,21 @@ function updateDevisItem(i, field, value) {
     const it = __devisItems[i];
     const lineEl = document.getElementById("d-line-total-" + i);
     if (lineEl) lineEl.textContent = fmtAr(Math.round((it.qty || 0) * (it.pu || 0))) + " Ar";
-    const totalEl = document.getElementById("d-total-display");
-    if (totalEl) totalEl.textContent = fmtAr(devisItemsTotal()) + " Ar";
+    renderDevisTotals();
   } else {
     __devisItems[i][field] = value;
   }
 }
 function renderDevisItems() {
   const container = document.getElementById("d-items-list");
-  const totalEl   = document.getElementById("d-total-display");
   if (!container) return;
   if (!__devisItems.length) {
     container.innerHTML = `<div style="text-align:center;padding:14px;color:var(--text-3);font-size:13px;border:1px dashed var(--border);border-radius:6px">Aucun article — cliquez "+ Ajouter une ligne"</div>`;
-    if (totalEl) totalEl.textContent = "0 Ar";
+    renderDevisTotals();
     return;
   }
-  let total = 0;
   container.innerHTML = __devisItems.map((it, i) => {
     const lt = Math.round((it.qty || 0) * (it.pu || 0));
-    total += lt;
     return `<div style="display:grid;grid-template-columns:3fr 70px 130px 110px 28px;gap:5px;margin-bottom:5px;align-items:center">
       <input class="input" style="padding:6px 8px;font-size:13px" placeholder="Désignation" value="${esc(it.desc||'')}" oninput="updateDevisItem(${i},'desc',this.value)">
       <input class="input" style="padding:6px 8px;font-size:13px" type="number" min="0" value="${it.qty||1}" oninput="updateDevisItem(${i},'qty',this.value)">
@@ -1209,13 +1219,32 @@ function renderDevisItems() {
       <button type="button" onclick="removeDevisItem(${i})" style="background:none;border:1px solid var(--border);border-radius:4px;padding:3px 6px;cursor:pointer;color:var(--red);font-size:12px">✕</button>
     </div>`;
   }).join("");
-  if (totalEl) totalEl.textContent = fmtAr(total) + " Ar";
+  renderDevisTotals();
 }
 function devisItemsToPayload() {
   return __devisItems.map(it => ({ description: it.desc||"", qty: it.qty||1, unitPrice: it.pu||0 }));
 }
 function devisItemsTotal() {
   return __devisItems.reduce((s, it) => s + Math.round((it.qty||0)*(it.pu||0)), 0);
+}
+// Recalcule et affiche le récapitulatif (sous-total, remise, TTC, acompte, reste)
+function renderDevisTotals() {
+  const sub = devisItemsTotal();
+  const remisePct = Math.min(Math.max(parseFloat(document.getElementById("d-remise")?.value) || 0, 0), 100);
+  const remiseAmt = Math.round(sub * remisePct / 100);
+  const ttc = sub - remiseAmt;
+  const acompte = Math.max(parseFloat(document.getElementById("d-acompte")?.value) || 0, 0);
+  const reste = Math.max(0, ttc - acompte);
+  const set = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = fmtAr(v) + " Ar"; };
+  set("d-subtotal-display", sub);
+  set("d-remise-display", remiseAmt);
+  set("d-total-display", ttc);
+  set("d-acompte-display", acompte);
+  set("d-reste-display", reste);
+  const show = (id, on) => { const e = document.getElementById(id); if (e) e.style.display = on ? "block" : "none"; };
+  show("d-remise-line", remiseAmt > 0);
+  show("d-acompte-line", acompte > 0);
+  show("d-reste-line", acompte > 0);
 }
 // ───────────────────────────────────────────────────────────
 
@@ -1272,6 +1301,8 @@ function openModal(type) {
     document.getElementById("d-categorie").value = "Demande devis";
     document.getElementById("d-echeance").value  = "";
     __devisItems = [];
+    document.getElementById("d-remise").value  = "0";
+    document.getElementById("d-acompte").value = "0";
     renderDevisItems();
     document.getElementById("modalDevis").classList.add("open");
   } else {
@@ -1319,6 +1350,8 @@ function editDevis(id) {
   } catch(e) {
     __devisItems = [{ desc: row["Produit / Service"] || "", qty: 1, pu: parseFloat(row["Montant (Ar)"]) || 0 }];
   }
+  document.getElementById("d-remise").value  = row["Remise"]  || "0";
+  document.getElementById("d-acompte").value = row["Acompte"] || "0";
   renderDevisItems();
   document.getElementById("d-priorite").value    = row["Priorité"] || "Moyenne";
   document.getElementById("d-categorie").value   = row["Catégorie"] || "Demande devis";
@@ -1337,8 +1370,11 @@ function editDevis(id) {
 async function saveDevis() {
   const id  = document.getElementById("devisEditId").value;
   const btn = document.getElementById("devisSaveBtn");
-  const items   = devisItemsToPayload();
-  const total   = devisItemsTotal();
+  const items    = devisItemsToPayload();
+  const subTotal = devisItemsTotal();
+  const remise   = Math.min(Math.max(parseFloat(document.getElementById("d-remise").value) || 0, 0), 100);
+  const acompte  = Math.max(parseFloat(document.getElementById("d-acompte").value) || 0, 0);
+  const total    = Math.round(subTotal * (1 - remise / 100)); // TTC après remise
   const payload = {
     client:      document.getElementById("d-client").value.trim(),
     emailClient: document.getElementById("d-email").value.trim(),
@@ -1346,6 +1382,8 @@ async function saveDevis() {
     produit:     items.length ? items[0].description : "",
     montant:     total,
     items:       JSON.stringify(items),
+    remise:      remise,
+    acompte:     acompte,
     categorie:   document.getElementById("d-categorie").value,
     date:        document.getElementById("d-date").value,
     statut:      document.getElementById("d-statut").value,

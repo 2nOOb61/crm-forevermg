@@ -171,8 +171,8 @@ function createFactDocFromCrm(payload) {
     status: docType === "invoice" ? "pending" : "draft",
     items: items,
     notes: noteParts.join(" | "),
-    acompte: 0,
-    discountRate: 0
+    acompte: Math.max(toNumber(devis["Acompte"] || 0), 0),
+    discountRate: Math.min(Math.max(toNumber(devis["Remise"] || 0), 0), 100)
   };
 
   var saved;
@@ -262,20 +262,25 @@ function syncDevisToFact_(devisId) {
     var sp = String(devis["Produit / Service"] || "").trim();
     if (sp) syncItems.push({ description: sp, qty: 1, unitPrice: toNumber(devis["Montant (Ar)"] || 0) });
   }
+  // Remise / Acompte depuis le devis CRM
+  var dr = Math.min(Math.max(toNumber(devis["Remise"] || 0), 0), 100);
+  var acompte = Math.max(toNumber(devis["Acompte"] || 0), 0);
+  var discountCol = headers.indexOf("DiscountRate");
+  if (discountCol >= 0) docSheet.getRange(rowIndex, discountCol + 1).setValue(dr);
+  var acompteCol = headers.indexOf("Acompte");
+  if (acompteCol >= 0) docSheet.getRange(rowIndex, acompteCol + 1).setValue(acompte);
+
   if (syncItems.length) {
     var itemsCol = headers.indexOf("Items");
     if (itemsCol < 0) {
       itemsCol = docSheet.getLastColumn();
       docSheet.getRange(1, itemsCol + 1).setValue("Items");
-      itemsCol = itemsCol; // 0-based for data; +1 for range
     }
     docSheet.getRange(rowIndex, itemsCol + 1).setValue(JSON.stringify(syncItems));
 
-    // Recalculer les totaux
+    // Recalculer les totaux avec la remise du CRM
     var totalsCol = headers.indexOf("Totals");
-    var discountCol = headers.indexOf("DiscountRate");
     if (totalsCol >= 0) {
-      var dr = discountCol >= 0 ? toNumber(rowData[discountCol]) : 0;
       docSheet.getRange(rowIndex, totalsCol + 1).setValue(JSON.stringify(computeTotalsServer(syncItems, dr)));
     }
   }
@@ -458,12 +463,10 @@ function createDevis(payload) {
     ts, ts
   ];
   sh.appendRow(row);
-  if (payload.items) {
-    var hdrs = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
-    var iCol = hdrs.indexOf("Items") + 1;
-    if (iCol === 0) { iCol = sh.getLastColumn() + 1; sh.getRange(1, iCol).setValue("Items"); }
-    sh.getRange(sh.getLastRow(), iCol).setValue(payload.items);
-  }
+  var newRow = sh.getLastRow();
+  if (payload.items) setDevisCol_(sh, newRow, "Items", payload.items);
+  setDevisCol_(sh, newRow, "Remise", toNumber(payload.remise || 0));
+  setDevisCol_(sh, newRow, "Acompte", toNumber(payload.acompte || 0));
   logAction("CREATE_DEVIS", id + " — " + payload.client);
   try { linkOrSyncDevisToFact_(id); } catch(e) { Logger.log("Link warn: " + e.message); }
   return { ok: true, id, message: "Devis créé." };
@@ -499,16 +502,22 @@ function updateDevis(payload) {
       if (col > 0) sh.getRange(item._row, col).setValue(val);
     }
   });
-  // Items column — create if absent
-  if (payload.items !== undefined) {
-    var iCol = headers.indexOf("Items") + 1;
-    if (iCol === 0) { iCol = sh.getLastColumn() + 1; sh.getRange(1, iCol).setValue("Items"); }
-    sh.getRange(item._row, iCol).setValue(payload.items);
-  }
+  // Colonnes dynamiques (créées si absentes)
+  if (payload.items !== undefined)   setDevisCol_(sh, item._row, "Items", payload.items);
+  if (payload.remise !== undefined)  setDevisCol_(sh, item._row, "Remise", toNumber(payload.remise || 0));
+  if (payload.acompte !== undefined) setDevisCol_(sh, item._row, "Acompte", toNumber(payload.acompte || 0));
 
   logAction("UPDATE_DEVIS", payload.id + " — statut: " + payload.statut);
   try { linkOrSyncDevisToFact_(payload.id); } catch(e) { Logger.log("Sync warn: " + e.message); }
   return { ok: true, message: "Devis mis à jour." };
+}
+
+// Écrit une valeur dans une colonne de la feuille Devis, en créant l'en-tête si absent
+function setDevisCol_(sh, rowNum, header, value) {
+  var hdrs = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+  var col = hdrs.indexOf(header) + 1;
+  if (col === 0) { col = sh.getLastColumn() + 1; sh.getRange(1, col).setValue(header); }
+  sh.getRange(rowNum, col).setValue(value);
 }
 
 function deleteDevis(payload) {
@@ -919,6 +928,13 @@ function fmtAr_(n) {
   var num = Math.round(Number(n) || 0);
   return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
 }
+function fmtDate_(v) {
+  if (!v && v !== 0) return "";
+  if (Object.prototype.toString.call(v) === "[object Date]") {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), "dd/MM/yyyy");
+  }
+  return String(v);
+}
 
 function buildDevisHtml_(devis) {
   var items = [];
@@ -930,47 +946,86 @@ function buildDevisHtml_(devis) {
     var p = String(devis["Produit / Service"] || "");
     if (p) items = [{ description: p, qty: 1, unitPrice: toNumber(devis["Montant (Ar)"] || 0) }];
   }
-  var total = 0;
-  var rows = items.map(function(it) {
-    var q  = Number(it.qty) || 0;
-    var pu = Number(it.unitPrice != null ? it.unitPrice : it.pu) || 0;
-    var lt = q * pu; total += lt;
-    return '<tr>' +
-      '<td>' + escHtml_(it.description || "") + '</td>' +
-      '<td style="text-align:center">' + q + '</td>' +
-      '<td style="text-align:right">' + fmtAr_(pu) + ' Ar</td>' +
-      '<td style="text-align:right">' + fmtAr_(lt) + ' Ar</td>' +
-    '</tr>';
-  }).join("");
+  var normItems = items.map(function(it) {
+    return { description: it.description || "", qty: Number(it.qty) || 0, unitPrice: Number(it.unitPrice != null ? it.unitPrice : it.pu) || 0 };
+  });
+  var remise  = Math.min(Math.max(toNumber(devis["Remise"] || 0), 0), 100);
+  var acompte = Math.max(toNumber(devis["Acompte"] || 0), 0);
+  var totals    = computeTotalsServer(normItems, remise);
+  var subTotal  = totals.subTotal;
+  var remiseAmt = Math.round(subTotal * remise / 100);
+  var totalTTC  = totals.totalTTC;
+  var reste     = Math.max(0, totalTTC - acompte);
 
-  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
-    + 'body{font-family:Arial,Helvetica,sans-serif;color:#1f2937;font-size:13px;margin:32px}'
-    + '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a4a3a;padding-bottom:14px;margin-bottom:20px}'
-    + '.brand{font-size:24px;font-weight:800;color:#1a4a3a}.brand span{color:#e8834a}'
-    + '.brand-sub{font-size:11px;color:#6b7280;margin-top:2px}'
-    + '.doc-title{text-align:right}.doc-title h1{font-size:20px;color:#1a4a3a;margin:0}'
-    + '.meta{font-size:12px;color:#6b7280;margin-top:4px}'
-    + '.client{background:#f1f5f9;border-radius:8px;padding:12px 14px;margin-bottom:18px}'
-    + '.client b{color:#1a4a3a}'
-    + 'table{width:100%;border-collapse:collapse;margin-top:8px}'
-    + 'th{background:#1a4a3a;color:#fff;padding:8px 10px;text-align:left;font-size:12px}'
-    + 'td{padding:8px 10px;border-bottom:1px solid #e5e7eb}'
-    + '.total{text-align:right;margin-top:14px;font-size:16px;font-weight:800;color:#1a4a3a}'
-    + '.foot{margin-top:30px;font-size:11px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px}'
-    + '</style></head><body>'
-    + '<div class="head">'
-    +   '<div><div class="brand">4EVER<span>MG</span></div><div class="brand-sub">Studio Photo/Vidéo · Impression · Cadeaux personnalisés<br>+261 34 03 767 69 · commercial4evermg@gmail.com</div></div>'
-    +   '<div class="doc-title"><h1>DEVIS</h1><div class="meta">N° ' + escHtml_(devis["ID"] || "") + '<br>Date : ' + escHtml_(devis["Date"] || "") + '</div></div>'
-    + '</div>'
-    + '<div class="client"><b>Client :</b> ' + escHtml_(devis["Client"] || "")
+  var company = getCompanyInfoInternal() || {};
+  var cName  = company.name  || "FOREVER MG";
+  var cAddr  = company.address || "Antananarivo, Madagascar";
+  var cPhone = company.phone || "+261 34 03 767 69";
+  var cEmail = company.email || "commercial4evermg@gmail.com";
+  var ids = [];
+  if (company.nif)  ids.push("NIF : " + company.nif);
+  if (company.stat) ids.push("STAT : " + company.stat);
+  var logoHtml = company.logoDataUrl
+    ? '<img src="' + escHtml_(company.logoDataUrl) + '" style="max-height:64px;max-width:170px;object-fit:contain" alt="logo">'
+    : '<div class="brand">4EVER<span>MG</span></div>';
+
+  var rows = normItems.map(function(it) {
+    var lt = it.qty * it.unitPrice;
+    return '<tr><td>' + escHtml_(it.description) + '</td>'
+      + '<td class="c">' + it.qty + '</td>'
+      + '<td class="r">' + fmtAr_(it.unitPrice) + ' Ar</td>'
+      + '<td class="r">' + fmtAr_(lt) + ' Ar</td></tr>';
+  }).join("");
+  if (!rows) rows = '<tr><td colspan="4" style="text-align:center;color:#9ca3af">Aucun article</td></tr>';
+
+  var totalsRows = '<div class="trow"><span>Sous-total</span><strong>' + fmtAr_(subTotal) + ' Ar</strong></div>';
+  if (remiseAmt > 0) totalsRows += '<div class="trow"><span>Remise (' + remise + ' %)</span><strong>&minus; ' + fmtAr_(remiseAmt) + ' Ar</strong></div>';
+  totalsRows += '<div class="trow grand"><span>Total TTC</span><strong>' + fmtAr_(totalTTC) + ' Ar</strong></div>';
+  if (acompte > 0) {
+    totalsRows += '<div class="trow"><span>Acompte versé</span><strong>&minus; ' + fmtAr_(acompte) + ' Ar</strong></div>';
+    totalsRows += '<div class="trow grand"><span>Reste à payer</span><strong>' + fmtAr_(reste) + ' Ar</strong></div>';
+  }
+
+  var bankLines = [];
+  if (company.bankName)    bankLines.push(escHtml_(company.bankName));
+  if (company.bankAccount) bankLines.push(escHtml_(company.bankAccount));
+  if (company.bankIban)    bankLines.push("IBAN : " + escHtml_(company.bankIban));
+  var footLeft = "";
+  if (bankLines.length)       footLeft += '<div><strong>Banque</strong><br>' + bankLines.join("<br>") + '</div>';
+  if (company.paymentTerms)   footLeft += '<div style="margin-top:6px"><strong>Conditions</strong><br>' + escHtml_(company.paymentTerms) + '</div>';
+
+  return '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><style>'
+    + 'body{font-family:Arial,Helvetica,sans-serif;color:#1e293b;background:#fff;margin:28px;font-size:13px}'
+    + '.wrap{max-width:860px;margin:0 auto}'
+    + '.grid{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #1a4a3a;padding-bottom:16px;margin-bottom:18px}'
+    + '.brand{font-size:26px;font-weight:800;color:#1a4a3a}.brand span{color:#e8834a}'
+    + '.co{font-size:12px;color:#64748b;margin-top:8px;line-height:1.5}.co strong{color:#1e293b}'
+    + '.right{text-align:right}'
+    + '.title{font-size:24px;font-weight:800;color:#1a4a3a;letter-spacing:.04em}'
+    + '.meta{font-size:12px;color:#64748b;margin-top:8px;line-height:1.6}.meta b{color:#1e293b}'
+    + '.client{background:#f1f5f9;border-radius:10px;padding:12px 16px;margin-bottom:16px}'
+    + '.client .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:#64748b;font-weight:700;margin-bottom:4px}'
+    + 'table{width:100%;border-collapse:collapse}'
+    + 'th{background:#1a4a3a;color:#fff;padding:9px 12px;text-align:left;font-size:12px}'
+    + 'th.r,td.r{text-align:right}th.c,td.c{text-align:center}'
+    + 'td{padding:9px 12px;border-bottom:1px solid #e5e7eb}'
+    + 'tbody tr:nth-child(even){background:#fafbfc}'
+    + '.totals{max-width:320px;margin-left:auto;margin-top:14px;border:1px solid #e5e7eb;border-radius:10px;padding:10px 14px;background:#f8fafc}'
+    + '.trow{display:flex;justify-content:space-between;padding:5px 0;font-size:13px}'
+    + '.trow.grand{border-top:1px dashed #cbd5e1;margin-top:4px;padding-top:9px;font-size:16px;color:#1a4a3a}.trow.grand strong{font-weight:800}'
+    + '.foot{margin-top:24px;padding-top:14px;border-top:1px solid #e5e7eb;color:#64748b;font-size:11px;display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}'
+    + '</style></head><body><div class="wrap">'
+    + '<div class="grid"><div>' + logoHtml
+    +   '<div class="co"><strong>' + escHtml_(cName) + '</strong><br>' + escHtml_(cAddr) + '<br>' + escHtml_(cPhone) + ' &middot; ' + escHtml_(cEmail) + (ids.length ? '<br>' + ids.join(" &middot; ") : "") + '</div>'
+    + '</div><div class="right"><div class="title">DEVIS</div><div class="meta">N&deg; <b>' + escHtml_(devis["ID"] || "") + '</b><br>Date : <b>' + fmtDate_(devis["Date"]) + '</b>'
+    +   (devis["Échéance"] ? '<br>Validité : ' + fmtDate_(devis["Échéance"]) : "") + '</div></div></div>'
+    + '<div class="client"><div class="lbl">Client</div><strong>' + escHtml_(devis["Client"] || "") + '</strong>'
     +   (devis["Email Client"] ? '<br>' + escHtml_(devis["Email Client"]) : "")
-    +   (devis["Téléphone"] ? '<br>' + escHtml_(devis["Téléphone"]) : "")
-    + '</div>'
-    + '<table><thead><tr><th>Désignation</th><th style="text-align:center">Qté</th><th style="text-align:right">P.U.</th><th style="text-align:right">Total</th></tr></thead>'
-    + '<tbody>' + (rows || '<tr><td colspan="4" style="text-align:center;color:#9ca3af">Aucun article</td></tr>') + '</tbody></table>'
-    + '<div class="total">Total TTC : ' + fmtAr_(total) + ' Ar</div>'
-    + '<div class="foot">Devis valable 30 jours à compter de sa date d\'émission. Merci de votre confiance.<br>FOREVER MG — Antananarivo, Madagascar</div>'
-    + '</body></html>';
+    +   (devis["Téléphone"] ? '<br>' + escHtml_(devis["Téléphone"]) : "") + '</div>'
+    + '<table><thead><tr><th>Désignation</th><th class="c">Qté</th><th class="r">P.U.</th><th class="r">Total</th></tr></thead><tbody>' + rows + '</tbody></table>'
+    + '<div class="totals">' + totalsRows + '</div>'
+    + '<div class="foot"><div>' + footLeft + '</div><div style="text-align:right">Devis valable 30 jours à compter de sa date d\'émission.<br>Merci de votre confiance.</div></div>'
+    + '</div></body></html>';
 }
 
 // ============================================================
