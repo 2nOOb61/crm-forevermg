@@ -1,0 +1,7 @@
+manifest.json
+sw.js
+.git/**
+node_modules/**
+.claspignore
+README.md
+memory/**

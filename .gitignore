@@ -1,0 +1,16 @@
+# Mémoire locale de Claude Code (ne pas versionner)
+memory/
+
+# Dépendances Node / clasp
+node_modules/
+
+# Identifiants clasp (jamais committer — token OAuth)
+.clasprc.json
+
+# OS / éditeurs
+.DS_Store
+Thumbs.db
+*.log
+
+# Fichiers temporaires de test
+_test_payload.json
