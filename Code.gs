@@ -857,18 +857,13 @@ function createDevisFromEmail(payload) {
 
 function sendEmail(payload) {
   try {
-    GmailApp.sendEmail(
-      payload.to,
-      payload.subject,
-      payload.body,
-      {
-        cc:       payload.cc       || "",
-        replyTo:  payload.replyTo  || "",
-        name:     "FOREVER MG"
-      }
-    );
-    logAction("SEND_EMAIL", "À: " + payload.to + " | Sujet: " + payload.subject);
-    return { ok: true, message: "E-mail envoyé." };
+    if (!payload.to) return { ok: false, error: "Destinataire requis." };
+    var atts = buildAttachments_(payload);
+    var opts = { cc: payload.cc || "", replyTo: payload.replyTo || "", name: "FOREVER MG" };
+    if (atts.length) opts.attachments = atts;
+    GmailApp.sendEmail(payload.to, payload.subject, payload.body, opts);
+    logAction("SEND_EMAIL", "À: " + payload.to + " | Sujet: " + payload.subject + (atts.length ? " | PJ: " + atts.length : ""));
+    return { ok: true, message: "E-mail envoyé." + (atts.length ? " (" + atts.length + " pièce(s) jointe(s))" : "") };
   } catch(err) {
     return { ok: false, error: err.message };
   }
@@ -876,17 +871,106 @@ function sendEmail(payload) {
 
 function createDraft(payload) {
   try {
-    GmailApp.createDraft(
-      payload.to,
-      payload.subject,
-      payload.body,
-      { cc: payload.cc || "", name: "FOREVER MG" }
-    );
+    var atts = buildAttachments_(payload);
+    var opts = { cc: payload.cc || "", name: "FOREVER MG" };
+    if (atts.length) opts.attachments = atts;
+    GmailApp.createDraft(payload.to, payload.subject, payload.body, opts);
     logAction("CREATE_DRAFT", "À: " + payload.to + " | Sujet: " + payload.subject);
-    return { ok: true, message: "Brouillon créé dans Gmail." };
+    return { ok: true, message: "Brouillon créé dans Gmail." + (atts.length ? " (" + atts.length + " PJ)" : "") };
   } catch(err) {
     return { ok: false, error: err.message };
   }
+}
+
+// Construit la liste des pièces jointes : PDF du devis (si payload.devisId) + fichiers base64
+function buildAttachments_(payload) {
+  var atts = [];
+  if (payload.devisId) {
+    try {
+      var pdf = buildDevisPdfBlob_(payload.devisId);
+      if (pdf) atts.push(pdf);
+    } catch (e) { Logger.log("PDF devis échec: " + e.message); }
+  }
+  (payload.attachments || []).forEach(function(a) {
+    try {
+      if (a && a.data) {
+        var bytes = Utilities.base64Decode(a.data);
+        atts.push(Utilities.newBlob(bytes, a.mimeType || "application/octet-stream", a.name || "piece-jointe"));
+      }
+    } catch (e) { Logger.log("PJ échec: " + e.message); }
+  });
+  return atts;
+}
+
+// Génère un PDF du devis à partir de la feuille Devis
+function buildDevisPdfBlob_(devisId) {
+  var devis = sheetToObjects(getSheet(CONFIG.SHEET_DEVIS)).find(function(r) { return r["ID"] === devisId; });
+  if (!devis) return null;
+  var html = buildDevisHtml_(devis);
+  var name = "Devis-" + String(devis["ID"] || "").replace(/[^A-Za-z0-9_-]/g, "") + ".pdf";
+  return Utilities.newBlob(html, "text/html", "devis.html").getAs("application/pdf").setName(name);
+}
+
+function escHtml_(s) {
+  return String(s == null ? "" : s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function fmtAr_(n) {
+  var num = Math.round(Number(n) || 0);
+  return String(num).replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+}
+
+function buildDevisHtml_(devis) {
+  var items = [];
+  try {
+    var raw = String(devis["Items"] || "").trim();
+    if (raw.charAt(0) === "[") items = JSON.parse(raw);
+  } catch (e) {}
+  if (!items.length) {
+    var p = String(devis["Produit / Service"] || "");
+    if (p) items = [{ description: p, qty: 1, unitPrice: toNumber(devis["Montant (Ar)"] || 0) }];
+  }
+  var total = 0;
+  var rows = items.map(function(it) {
+    var q  = Number(it.qty) || 0;
+    var pu = Number(it.unitPrice != null ? it.unitPrice : it.pu) || 0;
+    var lt = q * pu; total += lt;
+    return '<tr>' +
+      '<td>' + escHtml_(it.description || "") + '</td>' +
+      '<td style="text-align:center">' + q + '</td>' +
+      '<td style="text-align:right">' + fmtAr_(pu) + ' Ar</td>' +
+      '<td style="text-align:right">' + fmtAr_(lt) + ' Ar</td>' +
+    '</tr>';
+  }).join("");
+
+  return '<!DOCTYPE html><html><head><meta charset="utf-8"><style>'
+    + 'body{font-family:Arial,Helvetica,sans-serif;color:#1f2937;font-size:13px;margin:32px}'
+    + '.head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #1a4a3a;padding-bottom:14px;margin-bottom:20px}'
+    + '.brand{font-size:24px;font-weight:800;color:#1a4a3a}.brand span{color:#e8834a}'
+    + '.brand-sub{font-size:11px;color:#6b7280;margin-top:2px}'
+    + '.doc-title{text-align:right}.doc-title h1{font-size:20px;color:#1a4a3a;margin:0}'
+    + '.meta{font-size:12px;color:#6b7280;margin-top:4px}'
+    + '.client{background:#f1f5f9;border-radius:8px;padding:12px 14px;margin-bottom:18px}'
+    + '.client b{color:#1a4a3a}'
+    + 'table{width:100%;border-collapse:collapse;margin-top:8px}'
+    + 'th{background:#1a4a3a;color:#fff;padding:8px 10px;text-align:left;font-size:12px}'
+    + 'td{padding:8px 10px;border-bottom:1px solid #e5e7eb}'
+    + '.total{text-align:right;margin-top:14px;font-size:16px;font-weight:800;color:#1a4a3a}'
+    + '.foot{margin-top:30px;font-size:11px;color:#6b7280;border-top:1px solid #e5e7eb;padding-top:12px}'
+    + '</style></head><body>'
+    + '<div class="head">'
+    +   '<div><div class="brand">4EVER<span>MG</span></div><div class="brand-sub">Studio Photo/Vidéo · Impression · Cadeaux personnalisés<br>+261 34 03 767 69 · commercial4evermg@gmail.com</div></div>'
+    +   '<div class="doc-title"><h1>DEVIS</h1><div class="meta">N° ' + escHtml_(devis["ID"] || "") + '<br>Date : ' + escHtml_(devis["Date"] || "") + '</div></div>'
+    + '</div>'
+    + '<div class="client"><b>Client :</b> ' + escHtml_(devis["Client"] || "")
+    +   (devis["Email Client"] ? '<br>' + escHtml_(devis["Email Client"]) : "")
+    +   (devis["Téléphone"] ? '<br>' + escHtml_(devis["Téléphone"]) : "")
+    + '</div>'
+    + '<table><thead><tr><th>Désignation</th><th style="text-align:center">Qté</th><th style="text-align:right">P.U.</th><th style="text-align:right">Total</th></tr></thead>'
+    + '<tbody>' + (rows || '<tr><td colspan="4" style="text-align:center;color:#9ca3af">Aucun article</td></tr>') + '</tbody></table>'
+    + '<div class="total">Total TTC : ' + fmtAr_(total) + ' Ar</div>'
+    + '<div class="foot">Devis valable 30 jours à compter de sa date d\'émission. Merci de votre confiance.<br>FOREVER MG — Antananarivo, Madagascar</div>'
+    + '</body></html>';
 }
 
 // ============================================================

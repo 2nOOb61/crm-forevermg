@@ -584,6 +584,17 @@ textarea{resize:vertical;min-height:70px}
           <label>Corps du message *</label>
           <textarea id="emailBody" rows="8" placeholder="Bonjour,&#10;&#10;Suite à votre demande…&#10;&#10;Cordialement,&#10;FOREVER MG"></textarea>
         </div>
+        <div class="form-group full">
+          <label>Pièces jointes</label>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin:0">
+              📎 Ajouter des fichiers
+              <input type="file" id="emailFiles" multiple style="display:none" onchange="addEmailFiles(this.files)">
+            </label>
+            <span id="emailAttSize" style="font-size:11px;color:var(--text-3)"></span>
+          </div>
+          <div id="emailAttList" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+        </div>
       </div>
 
       <!-- Templates rapides -->
@@ -598,7 +609,7 @@ textarea{resize:vertical;min-height:70px}
       </div>
 
       <div style="display:flex;gap:8px;margin-top:16px">
-        <button class="btn btn-primary" onclick="sendEmailNow()">
+        <button class="btn btn-primary" id="emailSendBtn" onclick="sendEmailNow()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Envoyer
         </button>
@@ -727,6 +738,7 @@ textarea{resize:vertical;min-height:70px}
   </div>
   <div class="modal-footer">
     <button class="btn btn-ghost" onclick="closeModal('devis')">Annuler</button>
+    <button class="btn btn-orange" onclick="saveAndSendDevis()" id="devisSendBtn" title="Enregistre puis ouvre l'e-mail avec le PDF du devis joint">✉ Envoyer au client</button>
     <button class="btn btn-primary" onclick="saveDevis()" id="devisSaveBtn">Créer le devis</button>
   </div>
 </div>
@@ -1353,8 +1365,9 @@ async function saveDevis() {
   const res = await api(action, payload);
   btn.innerHTML = id ? "Enregistrer" : "Créer le devis";
   btn.disabled  = false;
-  if (res.ok) { closeModal("devis"); showToast(res.message || "Sauvegardé"); loadDevis(); }
-  else showToast("Erreur : " + res.error);
+  if (res.ok) { closeModal("devis"); showToast(res.message || "Sauvegardé"); loadDevis(); return id || res.id || null; }
+  showToast("Erreur : " + res.error);
+  return null;
 }
 
 async function quickUpdateDevis(id, statut) {
@@ -1648,10 +1661,56 @@ function loadTemplate(key) {
   document.getElementById("emailBody").value = t.body;
 }
 
+// ── Pièces jointes e-mail ──────────────────────────────────
+let __emailAttachments = []; // { name, mimeType, data(base64), size }
+let __emailDevisId = null;   // si défini → le PDF du devis est généré et joint côté serveur
+const MAX_ATT_TOTAL = 12 * 1024 * 1024; // 12 Mo
+
+function fmtSize_(b){ return b > 1048576 ? (b/1048576).toFixed(1)+" Mo" : Math.max(1, Math.round(b/1024))+" Ko"; }
+
+function addEmailFiles(fileList) {
+  const files = Array.from(fileList || []);
+  let pending = files.length;
+  if (!pending) return;
+  files.forEach(f => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const data = String(reader.result).split(",")[1] || ""; // retire "data:...;base64,"
+      __emailAttachments.push({ name: f.name, mimeType: f.type || "application/octet-stream", data, size: f.size });
+      if (--pending === 0) renderEmailAttachments();
+    };
+    reader.onerror = () => { if (--pending === 0) renderEmailAttachments(); };
+    reader.readAsDataURL(f);
+  });
+  const inp = document.getElementById("emailFiles"); if (inp) inp.value = "";
+}
+
+function removeEmailAttachment(i) { __emailAttachments.splice(i, 1); renderEmailAttachments(); }
+function removeDevisPdf() { __emailDevisId = null; renderEmailAttachments(); }
+
+function renderEmailAttachments() {
+  const wrap = document.getElementById("emailAttList");
+  if (!wrap) return;
+  let chips = "", total = 0;
+  if (__emailDevisId) {
+    chips += `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--green-pale);color:var(--green);padding:4px 9px;border-radius:6px;font-size:12px;font-weight:600">📄 Devis ${esc(__emailDevisId)}.pdf <button type="button" onclick="removeDevisPdf()" style="border:none;background:none;cursor:pointer;color:var(--green);font-weight:700">✕</button></span>`;
+  }
+  __emailAttachments.forEach((a, i) => {
+    total += a.size || 0;
+    chips += `<span style="display:inline-flex;align-items:center;gap:6px;background:var(--gray);padding:4px 9px;border-radius:6px;font-size:12px">📎 ${esc(a.name)} <span style="color:var(--text-3)">(${fmtSize_(a.size||0)})</span> <button type="button" onclick="removeEmailAttachment(${i})" style="border:none;background:none;cursor:pointer;color:var(--red);font-weight:700">✕</button></span>`;
+  });
+  wrap.innerHTML = chips;
+  const sizeEl = document.getElementById("emailAttSize");
+  if (sizeEl) sizeEl.textContent = total ? ("Total : " + fmtSize_(total)) : "";
+}
+
 function clearEmail() {
   ["emailTo","emailCc","emailReplyTo","emailSubject","emailBody"].forEach(id => {
     document.getElementById(id).value = "";
   });
+  __emailAttachments = [];
+  __emailDevisId = null;
+  renderEmailAttachments();
 }
 
 async function sendEmailNow() {
@@ -1659,22 +1718,66 @@ async function sendEmailNow() {
   const subject = document.getElementById("emailSubject").value.trim();
   const body    = document.getElementById("emailBody").value.trim();
   if (!to || !subject || !body) { showToast("Destinataire, objet et corps obligatoires"); return; }
+  const total = __emailAttachments.reduce((s,a)=>s+(a.size||0),0);
+  if (total > MAX_ATT_TOTAL) { showToast("Pièces jointes trop volumineuses (max 12 Mo)"); return; }
+  const btn = document.getElementById("emailSendBtn");
+  if (btn) { btn.disabled = true; btn.dataset.html = btn.innerHTML; btn.innerHTML = `<span class="spinner"></span> Envoi…`; }
   const res = await api("sendEmail", {
     to, subject, body,
     cc:      document.getElementById("emailCc").value.trim(),
-    replyTo: document.getElementById("emailReplyTo").value.trim()
+    replyTo: document.getElementById("emailReplyTo").value.trim(),
+    attachments: __emailAttachments.map(a => ({ name:a.name, mimeType:a.mimeType, data:a.data })),
+    devisId: __emailDevisId || ""
   });
-  if (res.ok) { showToast("✓ E-mail envoyé !"); clearEmail(); }
-  else showToast("Erreur : " + res.error);
+  if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.html || "Envoyer"; }
+  if (res && res.ok) { showToast(res.message || "✓ E-mail envoyé !"); clearEmail(); }
+  else showToast("Erreur : " + (res && res.error || "envoi impossible"));
 }
 
 async function saveDraft() {
   const to      = document.getElementById("emailTo").value.trim();
   const subject = document.getElementById("emailSubject").value.trim();
   const body    = document.getElementById("emailBody").value.trim();
-  const res = await api("createDraft", { to, subject, body, cc: document.getElementById("emailCc").value.trim() });
-  if (res.ok) { showToast("✓ Brouillon sauvegardé dans Gmail"); clearEmail(); }
-  else showToast("Erreur : " + res.error);
+  const res = await api("createDraft", {
+    to, subject, body,
+    cc: document.getElementById("emailCc").value.trim(),
+    attachments: __emailAttachments.map(a => ({ name:a.name, mimeType:a.mimeType, data:a.data })),
+    devisId: __emailDevisId || ""
+  });
+  if (res && res.ok) { showToast(res.message || "✓ Brouillon sauvegardé dans Gmail"); clearEmail(); }
+  else showToast("Erreur : " + (res && res.error || "échec"));
+}
+
+// Pré-remplit le composeur pour envoyer un devis (PDF auto-joint)
+function prepareDevisEmail(id, client, email) {
+  __emailDevisId = id;
+  __emailAttachments = [];
+  document.getElementById("emailTo").value      = email || "";
+  document.getElementById("emailCc").value      = "";
+  document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
+  document.getElementById("emailSubject").value = "Votre devis FOREVER MG" + (client ? " — " + client : "");
+  document.getElementById("emailBody").value =
+`Bonjour,
+
+Veuillez trouver ci-joint votre devis (${id}).
+
+Ce devis est valable 30 jours. N'hésitez pas à nous contacter pour toute question ou ajustement.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`;
+  renderEmailAttachments();
+  switchSection("email", document.querySelector("[data-section='email']"));
+  showToast("Devis prêt à envoyer — le PDF sera joint automatiquement");
+}
+
+// Bouton "Envoyer au client" du modal devis : enregistre puis ouvre le composeur
+async function saveAndSendDevis() {
+  const client = (document.getElementById("d-client").value||"").trim();
+  const email  = (document.getElementById("d-email").value||"").trim();
+  if (!email) { showToast("Renseignez l'email du client pour l'envoi"); return; }
+  const id = await saveDevis();
+  if (id) prepareDevisEmail(id, client, email);
 }
 
 // ============================================================
