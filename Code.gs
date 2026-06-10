@@ -5,6 +5,7 @@
 //  Version : 2.0 — Juin 2026
 // ============================================================
 
+
 var SPREADSHEET_ID = ""; // Laissez vide si le script est lié au Sheets
 
 // ---------- CONFIG CRM ----------
@@ -70,9 +71,10 @@ function doPost(e) {
       case "updatePO":             result = updatePO(payload);             break;
       case "getDashboard":         result = getDashboard();                break;
       case "getGmailLeads":        result = getGmailLeads();               break;
-      case "createDevisFromEmail": result = createDevisFromEmail(payload); break;
-      case "sendEmail":            result = sendEmail(payload);            break;
-      case "createDraft":          result = createDraft(payload);          break;
+      case "createDevisFromEmail":   result = createDevisFromEmail(payload);         break;
+      case "sendEmail":              result = sendEmail(payload);                    break;
+      case "createDraft":            result = createDraft(payload);                  break;
+      case "createFactDocFromCrm":   result = createFactDocFromCrm(payload);         break;
       default:
         result = { ok: false, error: "Commande inconnue : " + cmd };
     }
@@ -88,6 +90,193 @@ function doPost(e) {
 
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
+}
+
+// ============================================================
+//  INTÉGRATION CRM → FACTURATION
+// ============================================================
+
+function createFactDocFromCrm(payload) {
+  var devisId = String(payload.devisId || "");
+  var docType = String(payload.docType || "quote"); // "quote" | "invoice"
+  if (!devisId) return { ok: false, error: "devisId requis" };
+
+  var sh = getSheet(CONFIG.SHEET_DEVIS);
+  var rows = sheetToObjects(sh);
+  var devis = rows.find(function(r) { return r["ID"] === devisId; });
+  if (!devis) return { ok: false, error: "Devis CRM introuvable : " + devisId };
+
+  var clientId = findOrCreateFactClient_(devis);
+  if (!clientId) return { ok: false, error: "Nom de client manquant" };
+
+  var items = [];
+  try {
+    var raw = String(devis["Items"] || "").trim();
+    if (raw.startsWith("[")) items = JSON.parse(raw);
+  } catch(e) {}
+  if (!items.length) {
+    var produit = String(devis["Produit / Service"] || "").trim();
+    if (produit) items.push({ description: produit, qty: 1, unitPrice: toNumber(devis["Montant (Ar)"] || 0) });
+  }
+
+  var noteParts = [];
+  if (devis["Commentaire"])          noteParts.push(String(devis["Commentaire"]));
+  if (devis["Problème identifié"])   noteParts.push("Problème : " + String(devis["Problème identifié"]));
+  if (devis["Prochaine action"])     noteParts.push("Action : " + String(devis["Prochaine action"]));
+
+  var doc = {
+    clientId: clientId,
+    date: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy-MM-dd"),
+    status: docType === "invoice" ? "pending" : "draft",
+    items: items,
+    notes: noteParts.join(" | "),
+    acompte: 0,
+    discountRate: 0
+  };
+
+  var saved;
+  try {
+    saved = docType === "invoice" ? saveInvoiceInternal(doc) : saveQuoteInternal(doc);
+  } catch(e) {
+    return { ok: false, error: "Erreur création document : " + e.message };
+  }
+
+  updateDevisFactRef_(sh, devis._row, (docType === "invoice" ? "FA:" : "DV:") + saved.number, saved.id);
+  return { ok: true, docId: saved.id, docNumber: saved.number, type: docType };
+}
+
+// Lie le devis à Facturation s'il ne l'est pas encore, sinon le synchronise.
+function linkOrSyncDevisToFact_(devisId) {
+  var sh = getSheet(CONFIG.SHEET_DEVIS);
+  var devis = sheetToObjects(sh).find(function(r) { return r["ID"] === devisId; });
+  if (!devis) return;
+  var docId = String(devis["FacturationDocID"] || "").trim();
+  if (docId) {
+    syncDevisToFact_(devisId);            // déjà lié → synchroniser
+    return;
+  }
+  // Pas encore lié → créer un Devis Facturation si le montant est significatif
+  if (devisFactTotal_(devis) > 0) {
+    createFactDocFromCrm({ devisId: devisId, docType: "quote" });
+  }
+}
+
+// Total d'un devis CRM (depuis les articles JSON, sinon depuis Montant)
+function devisFactTotal_(devis) {
+  var total = 0;
+  try {
+    var raw = String(devis["Items"] || "").trim();
+    if (raw.charAt(0) === "[") {
+      JSON.parse(raw).forEach(function(it) {
+        total += (Number(it.qty) || 0) * (Number(it.unitPrice != null ? it.unitPrice : it.pu) || 0);
+      });
+    }
+  } catch (e) {}
+  if (!total) total = toNumber(devis["Montant (Ar)"] || 0);
+  return total;
+}
+
+function syncDevisToFact_(devisId) {
+  // Lire le devis CRM
+  var sh = getSheet(CONFIG.SHEET_DEVIS);
+  var devis = sheetToObjects(sh).find(function(r) { return r["ID"] === devisId; });
+  if (!devis) return;
+
+  var factDocId = String(devis["FacturationDocID"] || "").trim();
+  var factRef   = String(devis["FacturationRef"]   || "").trim();
+  if (!factDocId || !factRef) return;
+
+  // Accès direct à la feuille Facturation (Quotes ou Invoices)
+  var ss        = SpreadsheetApp.getActiveSpreadsheet();
+  var sheetName = factRef.substring(0, 3) === "FA:" ? "Invoices" : "Quotes";
+  var docSheet  = ss.getSheetByName(sheetName);
+  if (!docSheet) return;
+
+  var data    = docSheet.getDataRange().getValues();
+  if (data.length < 2) return;
+  var headers = data[0];
+
+  // Trouver la ligne par ID
+  var idCol = headers.indexOf("ID");
+  if (idCol < 0) return;
+  var rowIndex = -1;
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idCol] || "").trim() === factDocId) { rowIndex = i + 1; break; }
+  }
+  if (rowIndex < 0) return;
+  var rowData = data[rowIndex - 1]; // données actuelles (0-based)
+
+  // Mettre à jour le client
+  var clientId = findOrCreateFactClient_(devis);
+  var clientCol = headers.indexOf("ClientID");
+  if (clientId && clientCol >= 0) docSheet.getRange(rowIndex, clientCol + 1).setValue(clientId);
+
+  // Mettre à jour les articles depuis le CRM (remplace tout)
+  var syncItems = [];
+  try {
+    var rawItems = String(devis["Items"] || "").trim();
+    if (rawItems.startsWith("[")) syncItems = JSON.parse(rawItems);
+  } catch(e) {}
+  if (!syncItems.length) {
+    var sp = String(devis["Produit / Service"] || "").trim();
+    if (sp) syncItems.push({ description: sp, qty: 1, unitPrice: toNumber(devis["Montant (Ar)"] || 0) });
+  }
+  if (syncItems.length) {
+    var itemsCol = headers.indexOf("Items");
+    if (itemsCol < 0) {
+      itemsCol = docSheet.getLastColumn();
+      docSheet.getRange(1, itemsCol + 1).setValue("Items");
+      itemsCol = itemsCol; // 0-based for data; +1 for range
+    }
+    docSheet.getRange(rowIndex, itemsCol + 1).setValue(JSON.stringify(syncItems));
+
+    // Recalculer les totaux
+    var totalsCol = headers.indexOf("Totals");
+    var discountCol = headers.indexOf("DiscountRate");
+    if (totalsCol >= 0) {
+      var dr = discountCol >= 0 ? toNumber(rowData[discountCol]) : 0;
+      docSheet.getRange(rowIndex, totalsCol + 1).setValue(JSON.stringify(computeTotalsServer(syncItems, dr)));
+    }
+  }
+
+  // Mettre à jour les notes
+  var notesCol = headers.indexOf("Notes");
+  if (notesCol >= 0) {
+    var parts = [];
+    if (devis["Commentaire"])        parts.push(String(devis["Commentaire"]));
+    if (devis["Problème identifié"]) parts.push("Problème : " + String(devis["Problème identifié"]));
+    if (devis["Prochaine action"])   parts.push("Action : " + String(devis["Prochaine action"]));
+    if (parts.length) docSheet.getRange(rowIndex, notesCol + 1).setValue(parts.join(" | "));
+  }
+
+  logAction("SYNC_DEVIS_FACT", devisId + " → " + factDocId);
+}
+
+function findOrCreateFactClient_(devis) {
+  var name = String(devis["Client"] || "").trim();
+  if (!name) return "";
+  var sheet = getOrCreateSheet('Clients', ['ID','Name','Contact','Address','Phone','NIF','STAT']);
+  var data = sheet.getDataRange().getValues();
+  var nameIdx = data[0].indexOf('Name');
+  if (nameIdx < 0) return "";
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][nameIdx] || "").trim().toLowerCase() === name.toLowerCase())
+      return String(data[i][0]);
+  }
+  var id = 'CLI-' + Utilities.getUuid().slice(0, 8).toUpperCase();
+  sheet.appendRow([id, name, String(devis["Email Client"] || ""), "", String(devis["Téléphone"] || ""), "", ""]);
+  return id;
+}
+
+function updateDevisFactRef_(sheet, rowIndex, factRef, factDocId) {
+  var lastCol = sheet.getLastColumn();
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var refCol = headers.indexOf("FacturationRef") + 1;
+  var idCol  = headers.indexOf("FacturationDocID") + 1;
+  if (refCol === 0) { refCol = ++lastCol; sheet.getRange(1, refCol).setValue("FacturationRef"); }
+  if (idCol  === 0) { idCol  = ++lastCol; sheet.getRange(1, idCol).setValue("FacturationDocID"); }
+  sheet.getRange(rowIndex, refCol).setValue(factRef);
+  sheet.getRange(rowIndex, idCol).setValue(factDocId || "");
 }
 
 function initSheets() {
@@ -228,7 +417,14 @@ function createDevis(payload) {
     ts, ts
   ];
   sh.appendRow(row);
+  if (payload.items) {
+    var hdrs = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+    var iCol = hdrs.indexOf("Items") + 1;
+    if (iCol === 0) { iCol = sh.getLastColumn() + 1; sh.getRange(1, iCol).setValue("Items"); }
+    sh.getRange(sh.getLastRow(), iCol).setValue(payload.items);
+  }
   logAction("CREATE_DEVIS", id + " — " + payload.client);
+  try { linkOrSyncDevisToFact_(id); } catch(e) { Logger.log("Link warn: " + e.message); }
   return { ok: true, id, message: "Devis créé." };
 }
 
@@ -262,8 +458,15 @@ function updateDevis(payload) {
       if (col > 0) sh.getRange(item._row, col).setValue(val);
     }
   });
+  // Items column — create if absent
+  if (payload.items !== undefined) {
+    var iCol = headers.indexOf("Items") + 1;
+    if (iCol === 0) { iCol = sh.getLastColumn() + 1; sh.getRange(1, iCol).setValue("Items"); }
+    sh.getRange(item._row, iCol).setValue(payload.items);
+  }
 
   logAction("UPDATE_DEVIS", payload.id + " — statut: " + payload.statut);
+  try { linkOrSyncDevisToFact_(payload.id); } catch(e) { Logger.log("Sync warn: " + e.message); }
   return { ok: true, message: "Devis mis à jour." };
 }
 

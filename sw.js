@@ -1,5 +1,5 @@
-// FOREVER MG CRM — Service Worker v1.0
-const CACHE = "forevermg-crm-v1";
+// FOREVER MG CRM — Service Worker v2.0
+const CACHE = "forevermg-crm-v2";
 const ASSETS = [
   "./index.html",
   "./manifest.json"
@@ -20,16 +20,39 @@ self.addEventListener("activate", e => {
 });
 
 self.addEventListener("fetch", e => {
-  // Requêtes GAS : toujours réseau (pas de cache)
-  if (e.request.url.includes("script.google.com")) return;
+  const req = e.request;
 
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(res => {
-        if (res && res.status === 200 && e.request.method === "GET") {
+  // Requêtes GAS : toujours réseau (jamais de cache)
+  if (req.url.includes("script.google.com")) return;
+
+  // Page HTML / navigation : RÉSEAU D'ABORD (toujours la dernière version),
+  // cache uniquement en secours hors-ligne.
+  const isHTML = req.mode === "navigate"
+    || req.destination === "document"
+    || req.url.endsWith("/")
+    || req.url.endsWith(".html");
+
+  if (isHTML) {
+    e.respondWith(
+      fetch(req).then(res => {
+        if (res && res.status === 200) {
           const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
+          caches.open(CACHE).then(c => c.put("./index.html", clone));
+        }
+        return res;
+      }).catch(() => caches.match("./index.html"))
+    );
+    return;
+  }
+
+  // Autres ressources statiques : cache d'abord
+  e.respondWith(
+    caches.match(req).then(cached => {
+      if (cached) return cached;
+      return fetch(req).then(res => {
+        if (res && res.status === 200 && req.method === "GET") {
+          const clone = res.clone();
+          caches.open(CACHE).then(c => c.put(req, clone));
         }
         return res;
       }).catch(() => caches.match("./index.html"));
