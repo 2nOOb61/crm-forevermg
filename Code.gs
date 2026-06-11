@@ -1102,36 +1102,63 @@ function buildDevisHtml_(devis) {
 //  TRIGGER : Vérification quotidienne des relances
 // ============================================================
 function checkRelancesQuotidiennes() {
-  const devisRows = sheetToObjects(getSheet(CONFIG.SHEET_DEVIS))
-    .filter(r => r["ID"] !== "");
-  const today     = Utilities.formatDate(new Date(), "Indian/Antananarivo", "dd/MM/yyyy");
+  var user = Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || "commercial4evermg@gmail.com";
+  var sections = [];
+  var counts = [];
 
-  const urgents = devisRows.filter(r =>
-    r["Statut"] === "Ouvert" && r["Priorité"] === "Urgent"
-  );
-
-  if (urgents.length > 0) {
-    const user  = Session.getActiveUser().getEmail();
-    const lines = urgents.map(r =>
-      `• ${r["Client"]} — ${r["Produit / Service"]} (${r["Échéance"] || "pas d'échéance"})`
-    ).join("\n");
-
-    GmailApp.sendEmail(user,
-      `[FOREVER MG CRM] ${urgents.length} devis urgent(s) à traiter`,
-      `Bonjour,\n\nVoici les devis urgents en attente :\n\n${lines}\n\n` +
-      `Accédez au CRM pour traiter ces demandes.\n\n— FOREVER MG CRM`
-    );
+  // 1) Devis urgents en attente
+  var devisRows = sheetToObjects(getSheet(CONFIG.SHEET_DEVIS)).filter(function(r){ return r["ID"] !== ""; });
+  var urgents = devisRows.filter(function(r){ return r["Statut"] === "Ouvert" && r["Priorité"] === "Urgent"; });
+  if (urgents.length) {
+    var lignesD = urgents.map(function(r){
+      return "• " + (r["Client"] || "") + " — " + (r["Produit / Service"] || "") + " (échéance : " + (r["Échéance"] || "non définie") + ")";
+    }).join("\n");
+    sections.push("🔴 DEVIS URGENTS À TRAITER (" + urgents.length + ")\n" + lignesD);
+    counts.push(urgents.length + " devis urgent(s)");
   }
+
+  // 2) E-mails envoyés sans réponse depuis > 2 jours
+  var emails = [];
+  try { var rel = getEmailRelances({ days: 2 }); if (rel && rel.ok) emails = rel.data || []; } catch (e) {}
+  if (emails.length) {
+    var lignesE = emails.map(function(m){
+      return "• " + (m.subject || "(sans objet)") + " → " + extractToEmail_(m.to) + " (sans réponse depuis " + m.ageDays + " j)";
+    }).join("\n");
+    sections.push("📨 E-MAILS SANS RÉPONSE > 2 JOURS (" + emails.length + ")\n" + lignesE);
+    counts.push(emails.length + " e-mail(s) sans réponse");
+  }
+
+  if (!sections.length) return; // rien à signaler aujourd'hui
+
+  var crmUrl = "https://2nOOb61.github.io/crm-forevermg/";
+  var body = "Bonjour,\n\nVoici votre récapitulatif quotidien FOREVER MG :\n\n"
+    + sections.join("\n\n")
+    + "\n\n➡ Ouvrir le CRM : " + crmUrl + "\n\n— FOREVER MG CRM (rappel automatique)";
+  GmailApp.sendEmail(user, "[FOREVER MG CRM] Récap du jour — " + counts.join(" · "), body);
+}
+
+// Extrait juste l'adresse e-mail d'un en-tête "Nom <email>"
+function extractToEmail_(s) {
+  var m = String(s || "").match(/<(.+?)>/);
+  return m ? m[1] : String(s || "").trim();
 }
 
 // ============================================================
-//  INSTALLATION DU TRIGGER QUOTIDIEN
+//  INSTALLATION DU RAPPEL QUOTIDIEN
 // ============================================================
 function installTriggers() {
-  ScriptApp.getProjectTriggers().forEach(t => ScriptApp.deleteTrigger(t));
-  ScriptApp.newTrigger("checkRelancesQuotidiennes")
-    .timeBased().everyDays(1).atHour(8).create();
-  return { ok: true, message: "Trigger quotidien installé (08h00)." };
+  // Ne supprime que NOTRE trigger (préserve d'éventuels autres)
+  ScriptApp.getProjectTriggers().forEach(function(t){
+    if (t.getHandlerFunction() === "checkRelancesQuotidiennes") ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger("checkRelancesQuotidiennes").timeBased().everyDays(1).atHour(8).create();
+  return { ok: true, message: "Rappel quotidien installé (08h00) — devis urgents + e-mails sans réponse." };
+}
+
+// État du rappel quotidien
+function triggersStatus_() {
+  var trigs = ScriptApp.getProjectTriggers().filter(function(t){ return t.getHandlerFunction() === "checkRelancesQuotidiennes"; });
+  return { ok: true, installed: trigs.length > 0, count: trigs.length };
 }
 
 // ============================================================
