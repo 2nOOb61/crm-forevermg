@@ -91,6 +91,7 @@ function doPost(e) {
       case "getDashboard":         result = getDashboard();                break;
       case "getGmailLeads":        result = getGmailLeads();               break;
       case "createDevisFromEmail":   result = createDevisFromEmail(payload);         break;
+      case "getEmailContent":        result = getEmailContent(payload);              break;
       case "sendEmail":              result = sendEmail(payload);                    break;
       case "createDraft":            result = createDraft(payload);                  break;
       case "createFactDocFromCrm":   result = createFactDocFromCrm(payload);         break;
@@ -861,6 +862,40 @@ function createDevisFromEmail(payload) {
     });
   } catch(err) {
     return { ok: false, error: err.message };
+  }
+}
+
+// Contenu complet d'une conversation Gmail (tous les messages + corps HTML)
+function getEmailContent(payload) {
+  try {
+    var thread = GmailApp.getThreadById(payload.threadId);
+    if (!thread) return { ok: false, error: "Conversation introuvable." };
+    var messages = thread.getMessages().map(function(msg) {
+      var atts = [];
+      try {
+        atts = msg.getAttachments({ includeInlineImages: false }).map(function(a) {
+          return { name: a.getName(), size: a.getSize() };
+        });
+      } catch (e) {}
+      return {
+        from:    msg.getFrom(),
+        to:      msg.getTo(),
+        cc:      msg.getCc(),
+        date:    Utilities.formatDate(msg.getDate(), "Indian/Antananarivo", "dd/MM/yyyy HH:mm"),
+        subject: msg.getSubject(),
+        body:    msg.getBody(),       // HTML
+        plain:   msg.getPlainBody(),  // secours texte
+        attachments: atts
+      };
+    });
+    return {
+      ok: true,
+      subject: thread.getFirstMessageSubject(),
+      permalink: thread.getPermalink(),
+      messages: messages
+    };
+  } catch (err) {
+    return { ok: false, error: "Lecture impossible : " + err.message };
   }
 }
 

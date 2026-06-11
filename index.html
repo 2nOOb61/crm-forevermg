@@ -677,6 +677,24 @@ textarea{resize:vertical;min-height:70px}
 </div>
 </div>
 
+<!-- ═══════════ MODAL DÉTAIL E-MAIL ═══════════ -->
+<div class="overlay" id="modalEmail">
+<div class="modal" style="max-width:780px;width:97%">
+  <div class="modal-head">
+    <div class="modal-title" id="emailDetailSubject" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">E-mail</div>
+    <button class="modal-close" onclick="closeEmailModal()">✕</button>
+  </div>
+  <div id="emailDetailBody" style="max-height:68vh;overflow:auto">
+    <div class="empty" style="padding:30px"><span class="spinner"></span></div>
+  </div>
+  <div class="modal-footer">
+    <a id="emailDetailGmail" href="#" target="_blank" rel="noopener" class="btn btn-ghost" style="text-decoration:none;margin-right:auto">Ouvrir dans Gmail ↗</a>
+    <button class="btn btn-ghost" onclick="replyFromDetail()">✉ Répondre</button>
+    <button class="btn btn-primary" onclick="devisFromDetail()">+ Devis</button>
+  </div>
+</div>
+</div>
+
 <!-- ═══════════ MODAL NOUVEAU DEVIS ═══════════ -->
 <div class="overlay" id="modalDevis">
 <div class="modal">
@@ -1570,12 +1588,14 @@ function renderGmailList(rows) {
   }
   el.innerHTML = rows.map((m, i) => `
     <div class="gmail-item ${m.priorite==='Urgent'?'important':m.unread?'unread':''}">
-      <div class="gmail-meta">
-        <span class="gmail-from">${esc(m.from||"")}</span>
-        <span class="gmail-date">${esc(m.date||"")}</span>
+      <div style="cursor:pointer" onclick="openGmailDetail(${STATE.gmail.indexOf(m)})" title="Cliquer pour lire l'e-mail complet">
+        <div class="gmail-meta">
+          <span class="gmail-from">${esc(m.from||"")}</span>
+          <span class="gmail-date">${esc(m.date||"")}</span>
+        </div>
+        <div class="gmail-subject">${esc(m.subject||"")}</div>
+        <div class="gmail-snippet">${esc((m.snippet||"").substring(0,150))}</div>
       </div>
-      <div class="gmail-subject">${esc(m.subject||"")}</div>
-      <div class="gmail-snippet">${esc((m.snippet||"").substring(0,150))}</div>
       <div style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;align-items:center">
         <span class="badge ${CAT_BADGE[m.categorie]||'badge-gray'}">${esc(m.categorie||"")}</span>
         <span class="badge ${BOITE_BADGE[m.boite]||'badge-gray'}" title="Boîte de réception">${esc(m.boite||"")}@</span>
@@ -1621,6 +1641,70 @@ async function quickCreateDevis(i) {
     showToast("Erreur : " + res.error);
   }
 }
+
+// ── Détail e-mail (lecture du contenu complet) ─────────────
+let __emailDetailIdx = null;
+
+async function openGmailDetail(i) {
+  const m = STATE.gmail[i];
+  if (!m) return;
+  __emailDetailIdx = i;
+  document.getElementById("emailDetailSubject").textContent = m.subject || "E-mail";
+  document.getElementById("emailDetailGmail").style.display = "none";
+  document.getElementById("emailDetailBody").innerHTML = `<div class="empty" style="padding:30px"><span class="spinner"></span><div style="margin-top:10px;font-size:13px;color:var(--text-3)">Chargement du message…</div></div>`;
+  document.getElementById("modalEmail").classList.add("open");
+  const res = await api("getEmailContent", { threadId: m.threadId });
+  if (!res || !res.ok) {
+    document.getElementById("emailDetailBody").innerHTML = `<div class="empty" style="padding:30px"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res && res.error || "Lecture impossible")}</div></div>`;
+    return;
+  }
+  renderEmailDetail(res);
+}
+
+function renderEmailDetail(res) {
+  // Lien Gmail
+  const gm = document.getElementById("emailDetailGmail");
+  if (res.permalink) { gm.href = res.permalink; gm.style.display = ""; } else { gm.style.display = "none"; }
+  document.getElementById("emailDetailSubject").textContent = res.subject || "E-mail";
+
+  const wrap = document.getElementById("emailDetailBody");
+  const msgs = res.messages || [];
+  wrap.innerHTML = msgs.map((msg, k) => {
+    const atts = (msg.attachments || []).length
+      ? `<div style="margin-top:6px;font-size:12px;color:var(--text-2)">📎 ${msg.attachments.map(a => esc(a.name) + " (" + fmtSize_(a.size||0) + ")").join(" · ")}</div>`
+      : "";
+    return `
+      <div style="border:1px solid var(--gray-mid);border-radius:8px;margin-bottom:10px;overflow:hidden">
+        <div style="background:var(--gray);padding:8px 12px;font-size:12px;line-height:1.5">
+          <div><b>De :</b> ${esc(msg.from||"")}</div>
+          <div style="color:var(--text-2)"><b>À :</b> ${esc(msg.to||"")}${msg.cc ? " · <b>Cc :</b> " + esc(msg.cc) : ""}</div>
+          <div style="color:var(--text-3)">${esc(msg.date||"")}</div>
+          ${atts}
+        </div>
+        <iframe class="email-frame" data-k="${k}" sandbox="allow-same-origin" style="width:100%;border:none;background:#fff;min-height:120px"></iframe>
+      </div>`;
+  }).join("") || `<div class="empty" style="padding:24px">Message vide</div>`;
+
+  // Injecter le corps (HTML) dans chaque iframe sandboxé puis ajuster la hauteur
+  wrap.querySelectorAll("iframe.email-frame").forEach(frame => {
+    const msg = msgs[parseInt(frame.dataset.k, 10)];
+    if (!msg) return;
+    const html = (msg.body && msg.body.trim())
+      ? '<base target="_blank"><div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#1f2937;padding:6px;word-wrap:break-word">' + msg.body + '</div>'
+      : '<pre style="font-family:Arial,Helvetica,sans-serif;font-size:13px;white-space:pre-wrap;word-wrap:break-word;color:#1f2937;padding:6px">' + (msg.plain || "").replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) + '</pre>';
+    frame.onload = () => {
+      try {
+        const h = frame.contentDocument.body.scrollHeight;
+        frame.style.height = Math.min(Math.max(h + 28, 120), 2200) + "px";
+      } catch(e) { frame.style.height = "400px"; }
+    };
+    frame.srcdoc = html;
+  });
+}
+
+function closeEmailModal() { document.getElementById("modalEmail").classList.remove("open"); }
+function replyFromDetail() { if (__emailDetailIdx != null) { closeEmailModal(); precomposeGmail(__emailDetailIdx); } }
+function devisFromDetail() { if (__emailDetailIdx != null) quickCreateDevis(__emailDetailIdx); }
 
 // ============================================================
 //  ENVOI E-MAIL
