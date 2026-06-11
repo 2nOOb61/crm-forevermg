@@ -92,6 +92,7 @@ function doPost(e) {
       case "getGmailLeads":        result = getGmailLeads();               break;
       case "createDevisFromEmail":   result = createDevisFromEmail(payload);         break;
       case "getEmailContent":        result = getEmailContent(payload);              break;
+      case "getEmailRelances":       result = getEmailRelances(payload);             break;
       case "sendEmail":              result = sendEmail(payload);                    break;
       case "createDraft":            result = createDraft(payload);                  break;
       case "createFactDocFromCrm":   result = createFactDocFromCrm(payload);         break;
@@ -896,6 +897,40 @@ function getEmailContent(payload) {
     };
   } catch (err) {
     return { ok: false, error: "Lecture impossible : " + err.message };
+  }
+}
+
+// Relances e-mail : fils où NOTRE dernier message date de > N jours (pas de réponse client)
+function getEmailRelances(payload) {
+  try {
+    var days = (payload && payload.days) ? Number(payload.days) : 2;
+    var me = String(Session.getActiveUser().getEmail() || "").toLowerCase();
+    var myEmails = [me, "commercial4evermg@gmail.com", "contact4evermg@gmail.com"];
+    var threads = GmailApp.search("in:sent newer_than:45d", 0, 50);
+    var now = new Date().getTime();
+    var out = [];
+    threads.forEach(function(thread) {
+      var msgs = thread.getMessages();
+      if (!msgs.length) return;
+      var last = msgs[msgs.length - 1];
+      var lastFrom = String(last.getFrom() || "").toLowerCase();
+      var fromUs = myEmails.some(function(e) { return e && lastFrom.indexOf(e) !== -1; });
+      if (!fromUs) return; // le client a répondu en dernier → pas de relance
+      var ageDays = Math.floor((now - last.getDate().getTime()) / 86400000);
+      if (ageDays < days) return;
+      out.push({
+        threadId: thread.getId(),
+        subject:  thread.getFirstMessageSubject(),
+        to:       last.getTo(),
+        lastDate: Utilities.formatDate(last.getDate(), "Indian/Antananarivo", "dd/MM/yyyy HH:mm"),
+        ageDays:  ageDays,
+        msgCount: msgs.length
+      });
+    });
+    out.sort(function(a, b) { return b.ageDays - a.ageDays; });
+    return { ok: true, data: out.slice(0, 25), days: days };
+  } catch (err) {
+    return { ok: false, error: "Relances e-mail indisponibles : " + err.message };
   }
 }
 

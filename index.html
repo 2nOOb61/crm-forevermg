@@ -381,6 +381,17 @@ textarea{resize:vertical;min-height:70px}
     </div>
   </div>
 
+  <!-- Relances e-mail (sans réponse) -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">📨 Relances e-mail — sans réponse depuis +2 jours</div>
+      <button class="btn btn-ghost btn-sm" onclick="loadEmailRelances()">Actualiser</button>
+    </div>
+    <div class="card-body" id="emailRelancesList">
+      <div class="empty"><div class="empty-icon">📨</div><div class="empty-text">Cliquez sur Actualiser pour analyser</div></div>
+    </div>
+  </div>
+
   <!-- Derniers devis -->
   <div class="card">
     <div class="card-head">
@@ -834,6 +845,7 @@ let STATE = {
   po:    [],
   gmail: [],
   users: [],
+  emailRelances: [],
   loading: false
 };
 
@@ -1144,6 +1156,70 @@ async function loadDashboard() {
     </tr>`).join("") || `<tr><td colspan="4" style="text-align:center;color:var(--text-3);padding:24px">Aucun PO</td></tr>`;
 
   setStatus("Synchronisé", false);
+
+  // Relances e-mail : analyse Gmail au 1er affichage (non bloquant), puis manuel
+  if (!__emailRelancesLoaded) { __emailRelancesLoaded = true; loadEmailRelances(); }
+}
+
+let __emailRelancesLoaded = false;
+
+async function loadEmailRelances() {
+  const el = document.getElementById("emailRelancesList");
+  el.innerHTML = `<div class="empty"><span class="spinner" style="border-color:rgba(26,74,58,.2);border-top-color:var(--green)"></span><div style="margin-top:10px;font-size:13px;color:var(--text-3)">Analyse des e-mails envoyés…</div></div>`;
+  const res = await api("getEmailRelances", { days: 2 });
+  if (!res || !res.ok) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res && res.error || "Indisponible")}</div></div>`;
+    return;
+  }
+  STATE.emailRelances = res.data || [];
+  renderEmailRelances(STATE.emailRelances);
+}
+
+function renderEmailRelances(rows) {
+  const el = document.getElementById("emailRelancesList");
+  if (!rows.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">✓</div><div class="empty-text">Aucun e-mail en attente de réponse — tout est suivi !</div></div>`;
+    return;
+  }
+  el.innerHTML = rows.map((r, i) => `
+    <div class="relance-row">
+      <div style="min-width:0;cursor:pointer" onclick="viewEmailRelance(${i})" title="Voir l'e-mail">
+        <div class="relance-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(r.subject||"(sans objet)")}</div>
+        <div class="relance-detail">À : ${esc(extractEmail_(r.to))} · dernier envoi il y a <b>${r.ageDays} j</b></div>
+      </div>
+      <span class="badge ${r.ageDays>=5?'badge-red':'badge-amber'}">${r.ageDays} j</span>
+      <button class="btn btn-ghost btn-sm" onclick="relanceEmailFromList(${i})">Relancer →</button>
+    </div>`).join("");
+}
+
+function extractEmail_(s) { const m = String(s||"").match(/<(.+?)>/); return m ? m[1] : String(s||"").trim(); }
+function extractName_(s)  { const m = String(s||"").match(/^([^<]+)</); return m ? m[1].trim() : ""; }
+
+function viewEmailRelance(i) {
+  const r = (STATE.emailRelances||[])[i];
+  if (!r) return;
+  openEmailThread(r.threadId, r.subject, { replyTo: extractEmail_(r.to), replyName: extractName_(r.to) });
+}
+
+function relanceEmailFromList(i) {
+  const r = (STATE.emailRelances||[])[i];
+  if (!r) return;
+  document.getElementById("emailTo").value      = extractEmail_(r.to);
+  document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
+  document.getElementById("emailSubject").value = "Relance : " + (r.subject||"");
+  document.getElementById("emailBody").value =
+`Bonjour,
+
+Je me permets de revenir vers vous concernant mon précédent message, resté à ce jour sans réponse.
+
+Restant à votre entière disposition pour tout complément d'information.
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`;
+  __emailDevisId = null; __emailAttachments = [];
+  if (typeof renderEmailAttachments === "function") renderEmailAttachments();
+  switchSection("email", document.querySelector("[data-section='email']"));
 }
 
 // ============================================================
@@ -1643,17 +1719,26 @@ async function quickCreateDevis(i) {
 }
 
 // ── Détail e-mail (lecture du contenu complet) ─────────────
-let __emailDetailIdx = null;
+let __emailDetailCtx = null; // { threadId, subject, replyTo, replyName, categorie, priorite }
 
-async function openGmailDetail(i) {
+function openGmailDetail(i) {
   const m = STATE.gmail[i];
   if (!m) return;
-  __emailDetailIdx = i;
-  document.getElementById("emailDetailSubject").textContent = m.subject || "E-mail";
+  openEmailThread(m.threadId, m.subject, {
+    replyTo:   extractEmail_(m.from),
+    replyName: extractName_(m.from) || m.from,
+    categorie: m.categorie,
+    priorite:  m.priorite
+  });
+}
+
+async function openEmailThread(threadId, subject, ctx) {
+  __emailDetailCtx = Object.assign({ threadId: threadId, subject: subject }, ctx || {});
+  document.getElementById("emailDetailSubject").textContent = subject || "E-mail";
   document.getElementById("emailDetailGmail").style.display = "none";
   document.getElementById("emailDetailBody").innerHTML = `<div class="empty" style="padding:30px"><span class="spinner"></span><div style="margin-top:10px;font-size:13px;color:var(--text-3)">Chargement du message…</div></div>`;
   document.getElementById("modalEmail").classList.add("open");
-  const res = await api("getEmailContent", { threadId: m.threadId });
+  const res = await api("getEmailContent", { threadId: threadId });
   if (!res || !res.ok) {
     document.getElementById("emailDetailBody").innerHTML = `<div class="empty" style="padding:30px"><div class="empty-icon">⚠️</div><div class="empty-text">${esc(res && res.error || "Lecture impossible")}</div></div>`;
     return;
@@ -1703,8 +1788,38 @@ function renderEmailDetail(res) {
 }
 
 function closeEmailModal() { document.getElementById("modalEmail").classList.remove("open"); }
-function replyFromDetail() { if (__emailDetailIdx != null) { closeEmailModal(); precomposeGmail(__emailDetailIdx); } }
-function devisFromDetail() { if (__emailDetailIdx != null) quickCreateDevis(__emailDetailIdx); }
+
+function replyFromDetail() {
+  if (!__emailDetailCtx) return;
+  closeEmailModal();
+  document.getElementById("emailTo").value      = __emailDetailCtx.replyTo || "";
+  document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
+  document.getElementById("emailSubject").value = "Re : " + (__emailDetailCtx.subject || "");
+  document.getElementById("emailBody").value =
+`
+
+Cordialement,
+FOREVER MG — Studio Photo/Vidéo · Impression · Cadeaux personnalisés
++261 34 03 767 69 | commercial4evermg@gmail.com`;
+  __emailDevisId = null; __emailAttachments = [];
+  if (typeof renderEmailAttachments === "function") renderEmailAttachments();
+  switchSection("email", document.querySelector("[data-section='email']"));
+}
+
+async function devisFromDetail() {
+  if (!__emailDetailCtx) return;
+  const c = __emailDetailCtx;
+  const res = await api("createDevisFromEmail", {
+    threadId:    c.threadId,
+    client:      c.replyName || extractName_(c.replyTo) || c.replyTo || "",
+    emailClient: c.replyTo || "",
+    produit:     c.subject || "",
+    categorie:   c.categorie || "Demande devis",
+    priorite:    c.priorite  || "Haute"
+  });
+  if (res && res.ok) { showToast("✓ Devis créé — " + res.id); closeEmailModal(); loadDevis(); loadDashboard(); }
+  else showToast("Erreur : " + (res && res.error || "échec"));
+}
 
 // ============================================================
 //  ENVOI E-MAIL
