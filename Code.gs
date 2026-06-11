@@ -93,6 +93,7 @@ function doPost(e) {
       case "createDevisFromEmail":   result = createDevisFromEmail(payload);         break;
       case "getEmailContent":        result = getEmailContent(payload);              break;
       case "getEmailRelances":       result = getEmailRelances(payload);             break;
+      case "getEmailLog":            result = getEmailLog(payload);                  break;
       case "sendEmail":              result = sendEmail(payload);                    break;
       case "createDraft":            result = createDraft(payload);                  break;
       case "createFactDocFromCrm":   result = createFactDocFromCrm(payload);         break;
@@ -935,15 +936,69 @@ function getEmailRelances(payload) {
 }
 
 function sendEmail(payload) {
+  var type = payload.kind || (payload.devisId ? "Devis" : "Manuel");
   try {
     if (!payload.to) return { ok: false, error: "Destinataire requis." };
     var atts = buildAttachments_(payload);
     var opts = { cc: payload.cc || "", replyTo: payload.replyTo || "", name: "FOREVER MG" };
     if (atts.length) opts.attachments = atts;
     GmailApp.sendEmail(payload.to, payload.subject, payload.body, opts);
+    if (payload.devisId) stampDevisSent_(payload.devisId);
+    logEmailSend_(payload, type, atts.length, "Envoyé");
     logAction("SEND_EMAIL", "À: " + payload.to + " | Sujet: " + payload.subject + (atts.length ? " | PJ: " + atts.length : ""));
     return { ok: true, message: "E-mail envoyé." + (atts.length ? " (" + atts.length + " pièce(s) jointe(s))" : "") };
   } catch(err) {
+    logEmailSend_(payload, type, 0, "Échec : " + err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
+// --- Traçabilité des envois (feuille EmailLog) ---
+var EMAILLOG_HEADERS = ["Date/Heure", "Utilisateur", "Type", "Destinataire", "Objet", "PJ", "Devis", "Statut"];
+
+function logEmailSend_(payload, type, pjCount, status) {
+  try {
+    var sheet = getOrCreateSheet("EmailLog", EMAILLOG_HEADERS);
+    var u = (payload && payload.__user) ? (payload.__user.displayName || payload.__user.username || "") : "";
+    var pj = (pjCount || 0) + (payload && payload.devisId ? 1 : 0);
+    sheet.appendRow([
+      now(), u, type || "Manuel",
+      payload.to || "", payload.subject || "", pj,
+      payload.devisId || "", status || "Envoyé"
+    ]);
+  } catch (e) {}
+}
+
+function stampDevisSent_(devisId) {
+  try {
+    var sh = getSheet(CONFIG.SHEET_DEVIS);
+    var item = sheetToObjects(sh).find(function(r) { return r["ID"] === devisId; });
+    if (!item) return;
+    setDevisCol_(sh, item._row, "Envoyé le", now());
+    setDevisCol_(sh, item._row, "Nb envois", toNumber(item["Nb envois"] || 0) + 1);
+  } catch (e) {}
+}
+
+function getEmailLog(payload) {
+  try {
+    var limit = (payload && payload.limit) ? Number(payload.limit) : 40;
+    var sheet = getOrCreateSheet("EmailLog", EMAILLOG_HEADERS);
+    var data = sheet.getDataRange().getValues();
+    var out = [];
+    for (var i = data.length - 1; i >= 1 && out.length < limit; i--) {
+      out.push({
+        date:    String(data[i][0] || ""),
+        user:    String(data[i][1] || ""),
+        type:    String(data[i][2] || ""),
+        to:      String(data[i][3] || ""),
+        subject: String(data[i][4] || ""),
+        pj:      Number(data[i][5] || 0),
+        devis:   String(data[i][6] || ""),
+        status:  String(data[i][7] || "")
+      });
+    }
+    return { ok: true, data: out };
+  } catch (err) {
     return { ok: false, error: err.message };
   }
 }
@@ -954,6 +1009,7 @@ function createDraft(payload) {
     var opts = { cc: payload.cc || "", name: "FOREVER MG" };
     if (atts.length) opts.attachments = atts;
     GmailApp.createDraft(payload.to, payload.subject, payload.body, opts);
+    logEmailSend_(payload, "Brouillon", atts.length, "Brouillon");
     logAction("CREATE_DRAFT", "À: " + payload.to + " | Sujet: " + payload.subject);
     return { ok: true, message: "Brouillon créé dans Gmail." + (atts.length ? " (" + atts.length + " PJ)" : "") };
   } catch(err) {

@@ -392,6 +392,20 @@ textarea{resize:vertical;min-height:70px}
     </div>
   </div>
 
+  <!-- Historique des envois (traçabilité) -->
+  <div class="card">
+    <div class="card-head">
+      <div class="card-title">📋 Historique des envois</div>
+      <button class="btn btn-ghost btn-sm" onclick="loadEmailLog()">Actualiser</button>
+    </div>
+    <div class="card-body tbl-wrap">
+      <table>
+        <thead><tr><th>Date / Heure</th><th>Type</th><th>Destinataire</th><th>Objet</th><th>PJ</th><th>Par</th><th>Statut</th></tr></thead>
+        <tbody id="emailLogTbody"><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Derniers devis -->
   <div class="card">
     <div class="card-head">
@@ -1159,6 +1173,35 @@ async function loadDashboard() {
 
   // Relances e-mail : analyse Gmail au 1er affichage (non bloquant), puis manuel
   if (!__emailRelancesLoaded) { __emailRelancesLoaded = true; loadEmailRelances(); }
+  loadEmailLog();
+}
+
+async function loadEmailLog() {
+  const tb = document.getElementById("emailLogTbody");
+  if (!tb) return;
+  const res = await api("getEmailLog", { limit: 40 });
+  if (!res || !res.ok) {
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">${esc(res && res.error || "Indisponible")}</td></tr>`;
+    return;
+  }
+  const rows = res.data || [];
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Aucun envoi enregistré pour l'instant</td></tr>`;
+    return;
+  }
+  const TYPE_BADGE = { "Devis":"badge-green", "Relance":"badge-amber", "Manuel":"badge-blue", "Brouillon":"badge-gray" };
+  tb.innerHTML = rows.map(r => {
+    const ok = String(r.status||"").indexOf("Échec") === -1;
+    return `<tr>
+      <td style="white-space:nowrap">${esc(r.date||"")}</td>
+      <td><span class="badge ${TYPE_BADGE[r.type]||'badge-gray'}">${esc(r.type||"")}</span></td>
+      <td title="${esc(r.to||"")}">${esc(r.to||"")}</td>
+      <td title="${esc(r.subject||"")}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.subject||"")}</td>
+      <td style="text-align:center">${r.pj ? "📎 "+r.pj : "—"}</td>
+      <td>${esc(r.user||"—")}</td>
+      <td>${ok ? '<span class="badge badge-green">✓</span>' : '<span class="badge badge-red" title="'+esc(r.status)+'">Échec</span>'}</td>
+    </tr>`;
+  }).join("");
 }
 
 let __emailRelancesLoaded = false;
@@ -1204,6 +1247,7 @@ function viewEmailRelance(i) {
 function relanceEmailFromList(i) {
   const r = (STATE.emailRelances||[])[i];
   if (!r) return;
+  __emailKind = "Relance";
   document.getElementById("emailTo").value      = extractEmail_(r.to);
   document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
   document.getElementById("emailSubject").value = "Relance : " + (r.subject||"");
@@ -1252,7 +1296,7 @@ function renderDevis(rows) {
     <tr>
       <td><code style="font-size:11px;background:var(--gray);padding:2px 5px;border-radius:4px">${esc(r["ID"]||"")}</code></td>
       <td>${esc(r["Date"]||"")}</td>
-      <td title="${esc(r["Client"]||"")}" style="font-weight:500">${esc(r["Client"]||"")}</td>
+      <td title="${esc(r["Client"]||"")}" style="font-weight:500">${esc(r["Client"]||"")}${r["Envoyé le"] ? `<div style="font-size:10px;font-weight:400;color:#1a7a3a;margin-top:2px">📧 envoyé le ${esc(String(r["Envoyé le"]).split(" ")[0])}${r["Nb envois"]>1?` (${esc(r["Nb envois"])}×)`:""}</div>` : ""}</td>
       <td title="${esc(r["Produit / Service"]||"")}">${esc(r["Produit / Service"]||"")}</td>
       <td style="text-align:right">${r["Montant (Ar)"] ? fmtAr(r["Montant (Ar)"])+" Ar" : "—"}</td>
       <td>${badgeStatut(r["Statut"])}</td>
@@ -1689,6 +1733,7 @@ function renderGmailList(rows) {
 function precomposeGmail(i) {
   const m = STATE.gmail[i];
   if (!m) return;
+  __emailKind = "Manuel";
   const emailMatch = (m.from || "").match(/<(.+?)>/);
   document.getElementById("emailTo").value      = emailMatch ? emailMatch[1] : m.from || "";
   document.getElementById("emailSubject").value = "Re : " + (m.subject || "");
@@ -1792,6 +1837,7 @@ function closeEmailModal() { document.getElementById("modalEmail").classList.rem
 function replyFromDetail() {
   if (!__emailDetailCtx) return;
   closeEmailModal();
+  __emailKind = "Manuel";
   document.getElementById("emailTo").value      = __emailDetailCtx.replyTo || "";
   document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
   document.getElementById("emailSubject").value = "Re : " + (__emailDetailCtx.subject || "");
@@ -1825,6 +1871,7 @@ async function devisFromDetail() {
 //  ENVOI E-MAIL
 // ============================================================
 function precomposeRelance(client, email, produit) {
+  __emailKind = "Relance";
   document.getElementById("emailTo").value      = email || "";
   document.getElementById("emailSubject").value = "Relance — " + (produit || client);
   document.getElementById("emailBody").value    = `Bonjour,
@@ -1901,6 +1948,7 @@ function loadTemplate(key) {
 // ── Pièces jointes e-mail ──────────────────────────────────
 let __emailAttachments = []; // { name, mimeType, data(base64), size }
 let __emailDevisId = null;   // si défini → le PDF du devis est généré et joint côté serveur
+let __emailKind = "Manuel";  // type d'envoi pour la traçabilité (Devis/Relance/Manuel)
 const MAX_ATT_TOTAL = 12 * 1024 * 1024; // 12 Mo
 
 function fmtSize_(b){ return b > 1048576 ? (b/1048576).toFixed(1)+" Mo" : Math.max(1, Math.round(b/1024))+" Ko"; }
@@ -1947,6 +1995,7 @@ function clearEmail() {
   });
   __emailAttachments = [];
   __emailDevisId = null;
+  __emailKind = "Manuel";
   renderEmailAttachments();
 }
 
@@ -1964,7 +2013,8 @@ async function sendEmailNow() {
     cc:      document.getElementById("emailCc").value.trim(),
     replyTo: document.getElementById("emailReplyTo").value.trim(),
     attachments: __emailAttachments.map(a => ({ name:a.name, mimeType:a.mimeType, data:a.data })),
-    devisId: __emailDevisId || ""
+    devisId: __emailDevisId || "",
+    kind:    __emailKind
   });
   if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.html || "Envoyer"; }
   if (res && res.ok) { showToast(res.message || "✓ E-mail envoyé !"); clearEmail(); }
@@ -1989,6 +2039,7 @@ async function saveDraft() {
 function prepareDevisEmail(id, client, email) {
   __emailDevisId = id;
   __emailAttachments = [];
+  __emailKind = "Devis";
   document.getElementById("emailTo").value      = email || "";
   document.getElementById("emailCc").value      = "";
   document.getElementById("emailReplyTo").value = "commercial4evermg@gmail.com";
