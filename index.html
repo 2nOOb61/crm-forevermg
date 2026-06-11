@@ -396,13 +396,29 @@ textarea{resize:vertical;min-height:70px}
   <div class="card">
     <div class="card-head">
       <div class="card-title">📋 Historique des envois</div>
-      <button class="btn btn-ghost btn-sm" onclick="loadEmailLog()">Actualiser</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-ghost btn-sm" onclick="exportEmailLogCsv()" title="Exporter en CSV">⬇ Export CSV</button>
+        <button class="btn btn-ghost btn-sm" onclick="loadEmailLog()">Actualiser</button>
+      </div>
     </div>
-    <div class="card-body tbl-wrap">
-      <table>
-        <thead><tr><th>Date / Heure</th><th>Type</th><th>Destinataire</th><th>Objet</th><th>PJ</th><th>Par</th><th>Statut</th></tr></thead>
-        <tbody id="emailLogTbody"><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr></tbody>
-      </table>
+    <div class="card-body">
+      <div class="toolbar" style="margin-bottom:10px">
+        <input type="text" id="emailLogSearch" placeholder="Rechercher (destinataire, objet…)" oninput="filterEmailLog()" style="max-width:260px">
+        <select id="emailLogTypeFilter" onchange="filterEmailLog()">
+          <option value="tous">Tous les types</option>
+          <option value="Devis">Devis</option>
+          <option value="Relance">Relance</option>
+          <option value="Manuel">Manuel</option>
+          <option value="Brouillon">Brouillon</option>
+        </select>
+        <span id="emailLogCount" style="font-size:11px;color:var(--text-3);align-self:center"></span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Date / Heure</th><th>Type</th><th>Destinataire</th><th>Objet</th><th>PJ</th><th>Par</th><th>Statut</th></tr></thead>
+          <tbody id="emailLogTbody"><tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr></tbody>
+        </table>
+      </div>
     </div>
   </div>
 
@@ -728,6 +744,7 @@ textarea{resize:vertical;min-height:70px}
     <button class="modal-close" onclick="closeModal('devis')">✕</button>
   </div>
   <input type="hidden" id="devisEditId">
+  <div id="d-sent-info" style="display:none;background:#e8f8ee;border:1px solid #b7e4c7;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#1a7a3a"></div>
   <div class="form-grid">
     <div class="form-group"><label>Client *</label><input id="d-client" placeholder="Nom du client"></div>
     <div class="form-group"><label>E-mail client</label><input id="d-email" type="email" placeholder="client@example.mg"></div>
@@ -860,6 +877,7 @@ let STATE = {
   gmail: [],
   users: [],
   emailRelances: [],
+  emailLog: [],
   loading: false
 };
 
@@ -1176,25 +1194,44 @@ async function loadDashboard() {
   loadEmailLog();
 }
 
+const EMAILLOG_TYPE_BADGE = { "Devis":"badge-green", "Relance":"badge-amber", "Manuel":"badge-blue", "Brouillon":"badge-gray" };
+
 async function loadEmailLog() {
   const tb = document.getElementById("emailLogTbody");
   if (!tb) return;
-  const res = await api("getEmailLog", { limit: 40 });
+  tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Chargement…</td></tr>`;
+  const res = await api("getEmailLog", { limit: 200 });
   if (!res || !res.ok) {
     tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">${esc(res && res.error || "Indisponible")}</td></tr>`;
     return;
   }
-  const rows = res.data || [];
+  STATE.emailLog = res.data || [];
+  filterEmailLog();
+}
+
+function filterEmailLog() {
+  const q    = (document.getElementById("emailLogSearch")?.value || "").trim().toLowerCase();
+  const type = document.getElementById("emailLogTypeFilter")?.value || "tous";
+  let rows = STATE.emailLog || [];
+  if (type !== "tous") rows = rows.filter(r => r.type === type);
+  if (q) rows = rows.filter(r => (String(r.to||"") + " " + String(r.subject||"") + " " + String(r.user||"")).toLowerCase().includes(q));
+  renderEmailLog(rows);
+}
+
+function renderEmailLog(rows) {
+  const tb = document.getElementById("emailLogTbody");
+  const cnt = document.getElementById("emailLogCount");
+  if (cnt) cnt.textContent = (STATE.emailLog||[]).length ? rows.length + " / " + STATE.emailLog.length + " envoi(s)" : "";
+  if (!tb) return;
   if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">Aucun envoi enregistré pour l'instant</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--text-3);padding:24px">${(STATE.emailLog||[]).length ? "Aucun résultat pour ce filtre" : "Aucun envoi enregistré pour l'instant"}</td></tr>`;
     return;
   }
-  const TYPE_BADGE = { "Devis":"badge-green", "Relance":"badge-amber", "Manuel":"badge-blue", "Brouillon":"badge-gray" };
   tb.innerHTML = rows.map(r => {
     const ok = String(r.status||"").indexOf("Échec") === -1;
     return `<tr>
       <td style="white-space:nowrap">${esc(r.date||"")}</td>
-      <td><span class="badge ${TYPE_BADGE[r.type]||'badge-gray'}">${esc(r.type||"")}</span></td>
+      <td><span class="badge ${EMAILLOG_TYPE_BADGE[r.type]||'badge-gray'}">${esc(r.type||"")}</span></td>
       <td title="${esc(r.to||"")}">${esc(r.to||"")}</td>
       <td title="${esc(r.subject||"")}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.subject||"")}</td>
       <td style="text-align:center">${r.pj ? "📎 "+r.pj : "—"}</td>
@@ -1202,6 +1239,25 @@ async function loadEmailLog() {
       <td>${ok ? '<span class="badge badge-green">✓</span>' : '<span class="badge badge-red" title="'+esc(r.status)+'">Échec</span>'}</td>
     </tr>`;
   }).join("");
+}
+
+function exportEmailLogCsv() {
+  const rows = STATE.emailLog || [];
+  if (!rows.length) { showToast("Aucun envoi à exporter"); return; }
+  const headers = ["Date/Heure","Type","Destinataire","Objet","PJ","Par","Statut","Devis"];
+  const csvCell = v => '"' + String(v==null?"":v).replace(/"/g,'""') + '"';
+  const lines = [headers.join(";")].concat(
+    rows.map(r => [r.date, r.type, r.to, r.subject, r.pj, r.user, r.status, r.devis].map(csvCell).join(";"))
+  );
+  const csv = "﻿" + lines.join("\r\n"); // BOM pour Excel/accents
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "historique-envois-" + new Date().toISOString().slice(0,10) + ".csv";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast("✓ Export CSV téléchargé (" + rows.length + " lignes)");
 }
 
 let __emailRelancesLoaded = false;
@@ -1441,6 +1497,7 @@ function openModal(type) {
     __devisItems = [];
     document.getElementById("d-remise").value  = "0";
     document.getElementById("d-acompte").value = "0";
+    document.getElementById("d-sent-info").style.display = "none";
     renderDevisItems();
     document.getElementById("modalDevis").classList.add("open");
   } else {
@@ -1502,6 +1559,14 @@ function editDevis(id) {
   document.getElementById("d-date").value = parseDate(dateStr);
   const ech = row["Échéance"] || "";
   document.getElementById("d-echeance").value = parseDate(ech);
+  // Historique d'envoi
+  const sentEl = document.getElementById("d-sent-info");
+  if (row["Envoyé le"]) {
+    sentEl.style.display = "block";
+    sentEl.innerHTML = `📧 <b>Dernier envoi au client :</b> ${esc(String(row["Envoyé le"]))}` + (row["Nb envois"] > 1 ? ` · <b>${esc(String(row["Nb envois"]))}</b> envois au total` : "");
+  } else {
+    sentEl.style.display = "none";
+  }
   document.getElementById("modalDevis").classList.add("open");
 }
 
