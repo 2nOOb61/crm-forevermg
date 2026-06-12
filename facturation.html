@@ -3345,12 +3345,17 @@ function refreshPOSData() {
   // Stats
   google.script.run
     .withSuccessHandler(function(stats) {
-      document.getElementById('pos-stat-total').textContent   = formatAr(stats.totalVendu);
-      document.getElementById('pos-stat-avance').textContent  = formatAr(stats.totalAvance);
-      document.getElementById('pos-stat-reste').textContent   = formatAr(stats.totalReste);
-      document.getElementById('pos-stat-count').textContent   = stats.count + " / " + stats.countRecouvrement;
+      stats = stats || {};
+      document.getElementById('pos-stat-total').textContent   = formatAr(stats.totalVendu || 0);
+      document.getElementById('pos-stat-avance').textContent  = formatAr(stats.totalAvance || 0);
+      document.getElementById('pos-stat-reste').textContent   = formatAr(stats.totalReste || 0);
+      document.getElementById('pos-stat-count').textContent   = (stats.count || 0) + " / " + (stats.countRecouvrement || 0);
     })
-    .withFailureHandler(function(e){ console.warn("POS stats error:", e); })
+    .withFailureHandler(function(e){
+      console.warn("POS stats error:", e);
+      const tb = document.getElementById('pos-sales-table');
+      if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur de chargement : ${(e && e.message) ? e.message : e}</td></tr>`;
+    })
     .getQuickSalesStats(token);
   // Liste du mois
   google.script.run
@@ -3358,7 +3363,11 @@ function refreshPOSData() {
       renderPOSSalesTable(list);
       renderPOSRecouvrementList(list);
     })
-    .withFailureHandler(function(e){ console.warn("POS list error:", e); })
+    .withFailureHandler(function(e){
+      console.warn("POS list error:", e);
+      const tb = document.getElementById('pos-sales-table');
+      if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur liste : ${(e && e.message) ? e.message : e}</td></tr>`;
+    })
     .getQuickSalesList(token);
 }
 
