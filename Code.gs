@@ -2536,7 +2536,7 @@ function setCompanySignature(token, signatureDataUrl) {
 // EXTENSION : VENTE RAPIDE & POS
 // ==========================================
 function getSalesSheet() {
-  var ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  var ss = getSpreadsheet();
   var sheet = ss.getSheetByName("Ventes_Rapides");
   if (!sheet) {
     sheet = ss.insertSheet("Ventes_Rapides");
