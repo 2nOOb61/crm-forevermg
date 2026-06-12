@@ -2609,6 +2609,7 @@ function getQuickSalesList(token) {
   requireAuth(token);
   var sheet = getSalesSheet();
   var data = sheet.getDataRange().getValues();
+  var comCol = (data[0] || []).indexOf("Commercial");
   var list = [];
   var now = new Date();
   var thisMonth = now.getMonth();
@@ -2627,7 +2628,8 @@ function getQuickSalesList(token) {
         items: data[i][5],
         total: Number(data[i][6] || 0),
         avance: Number(data[i][7] || 0),
-        reste: Number(data[i][8] || 0)
+        reste: Number(data[i][8] || 0),
+        commercial: comCol >= 0 ? (data[i][comCol] || "") : ""
       });
     }
   }

@@ -688,19 +688,20 @@
         <div class="card">
           <div class="flex justify-between items-center mb-4">
             <h3 class="text-lg font-bold">Ventes du mois</h3>
-            <button onclick="refreshPOSData()" class="btn btn-secondary"><i class="fas fa-sync-alt"></i> Actualiser</button>
+            <button id="pos-refresh-btn" onclick="refreshPOSData()" class="btn btn-secondary"><i class="fas fa-sync-alt"></i> Actualiser</button>
           </div>
           <div class="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>Date</th>
+                  <th>Date d'émission</th>
                   <th>Client</th>
                   <th>Contact</th>
                   <th>Lieu</th>
                   <th>Total</th>
                   <th>Avance</th>
                   <th>Reste</th>
+                  <th>Commercial</th>
                   <th>Action</th>
                 </tr>
               </thead>
@@ -3342,6 +3343,15 @@ function processQuickSale() {
 function refreshPOSData() {
   const token = getAuthTokenOrLogin();
   if (!token) return;
+  const btn = document.getElementById('pos-refresh-btn');
+  const icon = btn ? btn.querySelector('i') : null;
+  if (icon) icon.classList.add('fa-spin');
+  if (btn) btn.disabled = true;
+  let pending = 2;
+  const stop = function(){ if (icon) icon.classList.remove('fa-spin'); if (btn) btn.disabled = false; };
+  const done = function(){ if (--pending <= 0) stop(); };
+  setTimeout(stop, 12000); // sécurité : ne jamais rester bloqué
+
   // Stats
   google.script.run
     .withSuccessHandler(function(stats) {
@@ -3350,11 +3360,13 @@ function refreshPOSData() {
       document.getElementById('pos-stat-avance').textContent  = formatAr(stats.totalAvance || 0);
       document.getElementById('pos-stat-reste').textContent   = formatAr(stats.totalReste || 0);
       document.getElementById('pos-stat-count').textContent   = (stats.count || 0) + " / " + (stats.countRecouvrement || 0);
+      done();
     })
     .withFailureHandler(function(e){
       console.warn("POS stats error:", e);
       const tb = document.getElementById('pos-sales-table');
-      if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur de chargement : ${(e && e.message) ? e.message : e}</td></tr>`;
+      if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur de chargement : ${(e && e.message) ? e.message : e}</td></tr>`;
+      done();
     })
     .getQuickSalesStats(token);
   // Liste du mois
@@ -3362,11 +3374,13 @@ function refreshPOSData() {
     .withSuccessHandler(function(list) {
       renderPOSSalesTable(list);
       renderPOSRecouvrementList(list);
+      done();
     })
     .withFailureHandler(function(e){
       console.warn("POS list error:", e);
       const tb = document.getElementById('pos-sales-table');
-      if (tb) tb.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur liste : ${(e && e.message) ? e.message : e}</td></tr>`;
+      if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur liste : ${(e && e.message) ? e.message : e}</td></tr>`;
+      done();
     })
     .getQuickSalesList(token);
 }
@@ -3376,7 +3390,7 @@ function renderPOSSalesTable(list) {
   if (!tbody) return;
   tbody.innerHTML = "";
   if (!list || !list.length) {
-    tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:2rem;">Aucune vente ce mois</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:2rem;">Aucune vente ce mois</td></tr>`;
     return;
   }
   list.slice().reverse().forEach(function(s) {
@@ -3394,6 +3408,7 @@ function renderPOSSalesTable(list) {
       <td class="font-semibold">${formatAr(s.total)}</td>
       <td style="color:#059669;">${formatAr(s.avance)}</td>
       <td>${resteBadge}</td>
+      <td>${s.commercial ? escapeHtml(s.commercial) : '<span style="color:var(--text-muted);">—</span>'}</td>
       <td>
         ${s.reste > 0 ? `<button class="btn btn-success" onclick="openValidatePayment(${s.rowIndex}, ${s.reste}, '${escapeHtml(s.clientName||"")}')"><i class="fas fa-coins"></i> Valider paiement</button>` : ""}
         <button class="btn btn-secondary" onclick="printPOSReceipt(${JSON.stringify(s).replace(/"/g,'&quot;')})"><i class="fas fa-print"></i></button>
