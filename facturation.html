@@ -447,6 +447,29 @@
             </div>
           </div>
         </div>
+
+        <!-- Performance par commercial -->
+        <div class="card" style="margin-top:24px;">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold"><i class="fas fa-user-tie"></i> Performance par commercial</h3>
+            <button class="btn btn-secondary" onclick="loadCommercialStats()"><i class="fas fa-sync-alt"></i> Actualiser</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Commercial</th>
+                  <th style="text-align:right;">Ventes directes</th>
+                  <th style="text-align:right;">Devis</th>
+                  <th style="text-align:right;">Factures</th>
+                  <th style="text-align:right;">Encaissé</th>
+                  <th style="text-align:right;">Reste à recouvrer</th>
+                </tr>
+              </thead>
+              <tbody id="commercial-stats"><tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       <!-- Clients -->
@@ -998,6 +1021,37 @@ document.addEventListener('DOMContentLoaded', function() {
       document.getElementById("stat-paid").textContent = formatAr(paidTotal);
       renderRecentQuotes();
       renderPendingInvoices();
+      loadCommercialStats();
+    }
+
+    function loadCommercialStats(){
+      const token = getAuthTokenOrLogin();
+      if (!token) return;
+      const tb = document.getElementById("commercial-stats");
+      if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr>`;
+      google.script.run
+        .withSuccessHandler(function(res){ renderCommercialStats(res && res.data ? res.data : []); })
+        .withFailureHandler(function(err){
+          const t = document.getElementById("commercial-stats");
+          if (t) t.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);padding:16px;">${(err && err.message) ? err.message : "Erreur de chargement"}</td></tr>`;
+        })
+        .getCommercialStats(token);
+    }
+
+    function renderCommercialStats(rows){
+      const tb = document.getElementById("commercial-stats");
+      if (!tb) return;
+      if (!rows.length){ tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Aucune donnée pour l'instant</td></tr>`; return; }
+      const cell = (count, montant) => `<span style="color:var(--text-muted);">${count}</span> · <strong>${formatAr(montant)}</strong>`;
+      tb.innerHTML = rows.map(r => `
+        <tr>
+          <td><strong>${escapeHtml(r.commercial)}</strong></td>
+          <td style="text-align:right;">${cell(r.vdCount, r.vdMontant)}</td>
+          <td style="text-align:right;">${cell(r.devisCount, r.devisMontant)}</td>
+          <td style="text-align:right;">${cell(r.factCount, r.factMontant)}</td>
+          <td style="text-align:right;color:#059669;"><strong>${formatAr(r.encaisse)}</strong></td>
+          <td style="text-align:right;color:#d97706;"><strong>${formatAr(r.reste)}</strong></td>
+        </tr>`).join("");
     }
 
     function renderClients(list = clients){

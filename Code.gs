@@ -186,6 +186,10 @@ function createFactDocFromCrm(payload) {
   }
 
   updateDevisFactRef_(sh, devis._row, (docType === "invoice" ? "FA:" : "DV:") + saved.number, saved.id);
+  try {
+    var com = commercialName_(payload.__user) || String(devis["Responsable"] || "");
+    if (com) setDocCommercialIfEmpty_(docType === "invoice" ? "Invoices" : "Quotes", saved.id, com);
+  } catch(e) {}
   return { ok: true, docId: saved.id, docNumber: saved.number, type: docType };
 }
 
@@ -2202,7 +2206,9 @@ function saveClient(token, client) {
 function saveQuote(token, quote) {
   var user = requireAuth(token);
   assertCan_(user.role, "quotes.write");
-  return saveQuoteInternal(quote);
+  var saved = saveQuoteInternal(quote);
+  try { setDocCommercialIfEmpty_("Quotes", saved.id, commercialName_(user)); } catch(e) {}
+  return saved;
 }
 
 function saveInvoice(token, invoice) {
@@ -2212,7 +2218,9 @@ function saveInvoice(token, invoice) {
   if (status === "paid" && !can_(user.role, "invoices.status.update")) {
     throw new Error("FORBIDDEN");
   }
-  return saveInvoiceInternal(invoice);
+  var saved = saveInvoiceInternal(invoice);
+  try { setDocCommercialIfEmpty_("Invoices", saved.id, commercialName_(user)); } catch(e) {}
+  return saved;
 }
 
 function saveDelivery(token, delivery) {
@@ -2540,13 +2548,25 @@ function getSalesSheet() {
   var sheet = ss.getSheetByName("Ventes_Rapides");
   if (!sheet) {
     sheet = ss.insertSheet("Ventes_Rapides");
-    sheet.appendRow(['Date', 'ID Client', 'Nom Client', 'Contact', 'Lieu', 'Détails', 'Total (MGA)', 'Avance', 'Reste']);
-    sheet.getRange(1, 1, 1, 9).setFontWeight("bold").setBackground("#f3f3f3");
+    sheet.appendRow(['Date', 'ID Client', 'Nom Client', 'Contact', 'Lieu', 'Détails', 'Total (MGA)', 'Avance', 'Reste', 'Commercial']);
+    sheet.getRange(1, 1, 1, 10).setFontWeight("bold").setBackground("#f3f3f3");
+  } else if (sheet.getLastColumn() >= 1) {
+    var headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    if (headers.indexOf("Commercial") === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue("Commercial");
+    }
   }
   return sheet;
 }
+
+// Nom du commercial = utilisateur connecté (displayName sinon username)
+function commercialName_(user) {
+  if (!user) return "";
+  return String(user.displayName || user.username || "").trim();
+}
+
 function saveQuickSale(token, saleData) {
-  requireAuth(token);
+  var user = requireAuth(token);
   var sheet = getSalesSheet();
   sheet.appendRow([
     new Date(),
@@ -2557,7 +2577,8 @@ function saveQuickSale(token, saleData) {
     saleData.items,
     saleData.total,
     saleData.avance,
-    saleData.reste
+    saleData.reste,
+    commercialName_(user)
   ]);
   return { success: true };
 }
@@ -2626,4 +2647,94 @@ function validatePayment(token, rowIndex, montant) {
   sheet.getRange(rowIndex, 8).setValue(nouveauAvance);
   sheet.getRange(rowIndex, 9).setValue(nouveauReste);
   return { success: true, nouveauReste: nouveauReste };
+}
+
+// ============================================================
+//  DASHBOARD PAR COMMERCIAL (commercial = utilisateur connecté)
+// ============================================================
+
+// Écrit le commercial sur un doc (Quotes/Invoices) seulement s'il est vide (1er créateur conservé)
+function setDocCommercialIfEmpty_(sheetName, docId, commercial) {
+  if (!docId || !commercial) return;
+  var sh = getSpreadsheet().getSheetByName(sheetName);
+  if (!sh) return;
+  var data = sh.getDataRange().getValues();
+  var headers = data[0] || [];
+  var idCol = headers.indexOf("ID");
+  if (idCol < 0) return;
+  var comCol = headers.indexOf("Commercial");
+  if (comCol < 0) { comCol = sh.getLastColumn(); sh.getRange(1, comCol + 1).setValue("Commercial"); }
+  for (var i = 1; i < data.length; i++) {
+    if (String(data[i][idCol]) === String(docId)) {
+      var existing = (comCol < data[i].length) ? data[i][comCol] : "";
+      if (!existing) sh.getRange(i + 1, comCol + 1).setValue(commercial);
+      return;
+    }
+  }
+}
+
+// Map id -> commercial pour une feuille
+function docCommercialMap_(sheetName) {
+  var map = {};
+  var sh = getSpreadsheet().getSheetByName(sheetName);
+  if (!sh) return map;
+  var data = sh.getDataRange().getValues();
+  if (!data.length) return map;
+  var idCol = data[0].indexOf("ID");
+  var comCol = data[0].indexOf("Commercial");
+  if (idCol < 0 || comCol < 0) return map;
+  for (var i = 1; i < data.length; i++) map[String(data[i][idCol])] = String(data[i][comCol] || "");
+  return map;
+}
+
+function getCommercialStats(token) {
+  requireAuth(token);
+  var stats = {};
+  function ensure(name) {
+    var n = String(name || "").trim() || "Non attribué";
+    if (!stats[n]) stats[n] = { commercial: n, vdCount: 0, vdMontant: 0, devisCount: 0, devisMontant: 0, factCount: 0, factMontant: 0, encaisse: 0, reste: 0 };
+    return stats[n];
+  }
+  // Ventes directes (Vente Rapide)
+  try {
+    var vr = getSpreadsheet().getSheetByName("Ventes_Rapides");
+    if (vr) {
+      var d = vr.getDataRange().getValues();
+      var h = d[0] || [];
+      var cTot = h.indexOf("Total (MGA)"), cAv = h.indexOf("Avance"), cRes = h.indexOf("Reste"), cCom = h.indexOf("Commercial");
+      for (var i = 1; i < d.length; i++) {
+        var s = ensure(cCom >= 0 ? d[i][cCom] : "");
+        s.vdCount++;
+        s.vdMontant += Number(d[i][cTot] || 0);
+        s.encaisse  += Number(d[i][cAv]  || 0);
+        s.reste     += Number(d[i][cRes] || 0);
+      }
+    }
+  } catch (e) {}
+  // Devis (Quotes)
+  try {
+    var qCom = docCommercialMap_("Quotes");
+    getQuotesInternal().forEach(function(q) {
+      var s = ensure(qCom[q.id]);
+      s.devisCount++;
+      s.devisMontant += Number((q.totals && q.totals.totalTTC) || 0);
+    });
+  } catch (e) {}
+  // Factures (Invoices)
+  try {
+    var iCom = docCommercialMap_("Invoices");
+    getInvoicesInternal().forEach(function(inv) {
+      var s = ensure(iCom[inv.id]);
+      var ttc = Number((inv.totals && inv.totals.totalTTC) || 0);
+      var ac  = Number(inv.acompte || 0);
+      var paid = String(inv.status || "").toLowerCase() === "paid";
+      s.factCount++;
+      s.factMontant += ttc;
+      s.encaisse += paid ? ttc : Math.min(ac, ttc);
+      s.reste    += paid ? 0   : Math.max(0, ttc - ac);
+    });
+  } catch (e) {}
+  var arr = Object.keys(stats).map(function(k) { return stats[k]; });
+  arr.sort(function(a, b) { return (b.vdMontant + b.factMontant + b.encaisse) - (a.vdMontant + a.factMontant + a.encaisse); });
+  return { ok: true, data: arr };
 }
