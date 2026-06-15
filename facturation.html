@@ -448,6 +448,48 @@
           </div>
         </div>
 
+        <!-- Ventes par caissier (vue patron) -->
+        <div class="card" style="margin-top:24px;">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold"><i class="fas fa-cash-register"></i> Ventes par caissier</h3>
+            <button class="btn btn-secondary" onclick="loadCashierSalesStats()"><i class="fas fa-sync-alt"></i> Actualiser</button>
+          </div>
+          <!-- 4 cartes de totaux -->
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div class="stat-card" style="text-align:center;">
+              <div class="stat-value" id="csh-count" style="color:#f97316;">0</div>
+              <div style="color:var(--text-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;">En cours</div>
+            </div>
+            <div class="stat-card" style="text-align:center;">
+              <div class="stat-value" id="csh-engage" style="color:#f97316;">0 Ar</div>
+              <div style="color:var(--text-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;">Total engagé</div>
+            </div>
+            <div class="stat-card" style="text-align:center;">
+              <div class="stat-value" id="csh-acomptes" style="color:#059669;">0 Ar</div>
+              <div style="color:var(--text-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;">Acomptes reçus</div>
+            </div>
+            <div class="stat-card" style="text-align:center;">
+              <div class="stat-value" id="csh-restant" style="color:#ef4444;">0 Ar</div>
+              <div style="color:var(--text-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;margin-top:4px;">Restant à percevoir</div>
+            </div>
+          </div>
+          <!-- Détail par caissier -->
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Caissier</th>
+                  <th style="text-align:right;">Nb</th>
+                  <th style="text-align:right;">Total engagé</th>
+                  <th style="text-align:right;">Acomptes reçus</th>
+                  <th style="text-align:right;">Restant à percevoir</th>
+                </tr>
+              </thead>
+              <tbody id="cashier-stats"><tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+
         <!-- Performance par commercial -->
         <div class="card" style="margin-top:24px;">
           <div class="flex justify-between items-center mb-4">
@@ -1020,6 +1062,7 @@ document.addEventListener('DOMContentLoaded', function() {
       renderRecentQuotes();
       renderPendingInvoices();
       loadCommercialStats();
+      loadCashierSalesStats();
     }
 
     function loadCommercialStats(silent){
@@ -1053,6 +1096,45 @@ document.addEventListener('DOMContentLoaded', function() {
           <td style="text-align:right;">${cell(r.factCount, r.factMontant)}</td>
           <td style="text-align:right;color:#059669;"><strong>${formatAr(r.encaisse)}</strong></td>
           <td style="text-align:right;color:#d97706;"><strong>${formatAr(r.reste)}</strong></td>
+        </tr>`).join("");
+    }
+
+    // Ventes par caissier (vue patron) — 4 cartes de totaux + table par caissier
+    function loadCashierSalesStats(silent){
+      const token = silent
+        ? ((typeof getAuthToken === "function") ? getAuthToken() : null)
+        : getAuthTokenOrLogin();
+      if (!token) return;
+      const tb = document.getElementById("cashier-stats");
+      if (tb && !silent) tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr>`;
+      google.script.run
+        .withSuccessHandler(function(res){ renderCashierSalesStats(res || {}); })
+        .withFailureHandler(function(err){
+          if (silent) return; // auto-refresh : on garde l'affichage
+          const t = document.getElementById("cashier-stats");
+          if (t) t.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);padding:16px;">${(err && err.message) ? err.message : "Erreur de chargement"}</td></tr>`;
+        })
+        .getCashierSalesStats(token);
+    }
+
+    function renderCashierSalesStats(res){
+      const totals = (res && res.totals) ? res.totals : { count:0, totalEngage:0, acomptes:0, restant:0 };
+      const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      setTxt("csh-count", totals.count || 0);
+      setTxt("csh-engage", formatAr(totals.totalEngage || 0));
+      setTxt("csh-acomptes", formatAr(totals.acomptes || 0));
+      setTxt("csh-restant", formatAr(totals.restant || 0));
+      const tb = document.getElementById("cashier-stats");
+      if (!tb) return;
+      const rows = (res && res.rows) ? res.rows : [];
+      if (!rows.length){ tb.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">Aucune vente pour l'instant</td></tr>`; return; }
+      tb.innerHTML = rows.map(r => `
+        <tr>
+          <td><strong>${escapeHtml(r.caissier)}</strong></td>
+          <td style="text-align:right;">${r.count || 0}</td>
+          <td style="text-align:right;"><strong>${formatAr(r.totalEngage || 0)}</strong></td>
+          <td style="text-align:right;color:#059669;">${formatAr(r.acomptes || 0)}</td>
+          <td style="text-align:right;color:#d97706;"><strong>${formatAr(r.restant || 0)}</strong></td>
         </tr>`).join("");
     }
 
@@ -3571,8 +3653,9 @@ function printPOSReceipt(d) {
     try {
       if (page === "pos-system" && typeof refreshPOSData === "function") {
         refreshPOSData(true);
-      } else if (page === "dashboard" && typeof loadCommercialStats === "function") {
-        loadCommercialStats(true);
+      } else if (page === "dashboard") {
+        if (typeof loadCommercialStats === "function") loadCommercialStats(true);
+        if (typeof loadCashierSalesStats === "function") loadCashierSalesStats(true);
       }
     } catch (e) { /* silencieux : le prochain cycle réessaiera */ }
   }

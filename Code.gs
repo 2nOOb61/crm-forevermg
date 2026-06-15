@@ -2740,3 +2740,39 @@ function getCommercialStats(token) {
   arr.sort(function(a, b) { return (b.vdMontant + b.factMontant + b.encaisse) - (a.vdMontant + a.factMontant + a.encaisse); });
   return { ok: true, data: arr };
 }
+
+// ============================================================
+//  VENTES PAR CAISSIER (vue patron) — uniquement la Vente Rapide (caisse)
+//  Regroupe Ventes_Rapides par Commercial (= caissier) + totaux globaux.
+//  total engagé = somme des totaux ; acomptes = somme des avances ;
+//  restant = somme des restes (total = acomptes + restant).
+// ============================================================
+function getCashierSalesStats(token) {
+  requireAuth(token);
+  var sheet = getSalesSheet();
+  var data = sheet.getDataRange().getValues();
+  var h = data[0] || [];
+  var cTot = h.indexOf("Total (MGA)");
+  var cAv  = h.indexOf("Avance");
+  var cRes = h.indexOf("Reste");
+  var cCom = h.indexOf("Commercial");
+  var map = {};
+  function ensure(name) {
+    var n = String(name || "").trim() || "Non attribué";
+    if (!map[n]) map[n] = { caissier: n, count: 0, totalEngage: 0, acomptes: 0, restant: 0 };
+    return map[n];
+  }
+  var totals = { count: 0, totalEngage: 0, acomptes: 0, restant: 0 };
+  for (var i = 1; i < data.length; i++) {
+    if (cTot < 0) break;
+    var tot = Number(data[i][cTot] || 0);
+    var av  = cAv  >= 0 ? Number(data[i][cAv]  || 0) : 0;
+    var res = cRes >= 0 ? Number(data[i][cRes] || 0) : 0;
+    var s = ensure(cCom >= 0 ? data[i][cCom] : "");
+    s.count++;      s.totalEngage += tot; s.acomptes += av; s.restant += res;
+    totals.count++; totals.totalEngage += tot; totals.acomptes += av; totals.restant += res;
+  }
+  var rows = Object.keys(map).map(function(k) { return map[k]; });
+  rows.sort(function(a, b) { return b.totalEngage - a.totalEngage; });
+  return { ok: true, totals: totals, rows: rows };
+}
