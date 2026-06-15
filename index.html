@@ -1133,6 +1133,24 @@ function switchSection(id, btn) {
 }
 
 // ============================================================
+//  AUTO-REFRESH DASHBOARD — remonte les données saisies sur les
+//  autres postes (section active + onglet visible + connecté).
+// ============================================================
+(function() {
+  var AUTO_REFRESH_MS = 45000; // 45 s
+  function tick() {
+    if (document.hidden) return;
+    if (typeof getToken === "function" && !getToken()) return; // pas connecté
+    var sec = document.getElementById("sec-dashboard");
+    if (sec && sec.classList.contains("active") && typeof loadDashboard === "function") {
+      try { loadDashboard(); } catch (e) {}
+    }
+  }
+  setInterval(tick, AUTO_REFRESH_MS);
+  document.addEventListener("visibilitychange", function() { if (!document.hidden) tick(); });
+})();
+
+// ============================================================
 //  DASHBOARD
 // ============================================================
 async function loadDashboard() {

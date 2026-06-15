@@ -1,5 +1,5 @@
-// FOREVER MG CRM — Service Worker v2.0
-const CACHE = "forevermg-crm-v2";
+// FOREVER MG CRM — Service Worker v3.0
+const CACHE = "forevermg-crm-v3";
 const ASSETS = [
   "./index.html",
   "./manifest.json"

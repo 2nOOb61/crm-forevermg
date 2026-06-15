@@ -733,18 +733,15 @@ document.addEventListener('DOMContentLoaded', function() {
   if (sf) sf.addEventListener('submit', function(e){ e.preventDefault(); if(typeof submitSetup==='function') submitSetup(); });
 });
 
-// Config GAS — même URL que le CRM
+// Config GAS — la Facturation est servie par Apps Script.
+// Le transport réel est google.script.run : aucune URL à saisir.
+// (On ne demande PLUS l'URL : le prompt s'affichait à chaque collaborateur car
+//  le localStorage du bac à sable googleusercontent est vide/distinct du CRM.)
 window.GAS_URL = localStorage.getItem('facturepro_gas_url') || '';
-if (!window.GAS_URL) {
-  const url = prompt("Entrez l'URL de votre Google Apps Script (même URL que le CRM) :");
-  if (url) {
-    localStorage.setItem('facturepro_gas_url', url);
-    window.GAS_URL = url;
-  }
-}
 document.addEventListener('DOMContentLoaded', function() {
   const el = document.getElementById('fact-gas-status');
-  if (el) el.textContent = window.GAS_URL ? 'GAS: connecté ✓' : 'GAS: non configuré';
+  var connected = (typeof google !== "undefined" && google.script && google.script.run);
+  if (el) el.textContent = connected ? 'GAS: connecté ✓' : 'GAS: non disponible';
 });
 </script>
 
@@ -1025,14 +1022,18 @@ document.addEventListener('DOMContentLoaded', function() {
       loadCommercialStats();
     }
 
-    function loadCommercialStats(){
-      const token = getAuthTokenOrLogin();
+    function loadCommercialStats(silent){
+      // silent = auto-refresh : pas de popup login, pas de "Chargement…", pas d'erreur qui écrase les données
+      const token = silent
+        ? ((typeof getAuthToken === "function") ? getAuthToken() : null)
+        : getAuthTokenOrLogin();
       if (!token) return;
       const tb = document.getElementById("commercial-stats");
-      if (tb) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr>`;
+      if (tb && !silent) tb.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--text-muted);padding:16px;">Chargement…</td></tr>`;
       google.script.run
         .withSuccessHandler(function(res){ renderCommercialStats(res && res.data ? res.data : []); })
         .withFailureHandler(function(err){
+          if (silent) return; // auto-refresh : on garde l'affichage, le prochain cycle réessaiera
           const t = document.getElementById("commercial-stats");
           if (t) t.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--danger);padding:16px;">${(err && err.message) ? err.message : "Erreur de chargement"}</td></tr>`;
         })
@@ -3340,8 +3341,11 @@ function processQuickSale() {
     .saveQuickSale(token, data);
 }
 
-function refreshPOSData() {
-  const token = getAuthTokenOrLogin();
+function refreshPOSData(silent) {
+  // silent = auto-refresh : pas de popup login, et on n'écrase pas le tableau en cas d'erreur passagère
+  const token = silent
+    ? ((typeof getAuthToken === "function") ? getAuthToken() : null)
+    : getAuthTokenOrLogin();
   if (!token) return;
   const btn = document.getElementById('pos-refresh-btn');
   const icon = btn ? btn.querySelector('i') : null;
@@ -3364,8 +3368,10 @@ function refreshPOSData() {
     })
     .withFailureHandler(function(e){
       console.warn("POS stats error:", e);
-      const tb = document.getElementById('pos-sales-table');
-      if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur de chargement : ${(e && e.message) ? e.message : e}</td></tr>`;
+      if (!silent) {
+        const tb = document.getElementById('pos-sales-table');
+        if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur de chargement : ${(e && e.message) ? e.message : e}</td></tr>`;
+      }
       done();
     })
     .getQuickSalesStats(token);
@@ -3378,8 +3384,10 @@ function refreshPOSData() {
     })
     .withFailureHandler(function(e){
       console.warn("POS list error:", e);
-      const tb = document.getElementById('pos-sales-table');
-      if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur liste : ${(e && e.message) ? e.message : e}</td></tr>`;
+      if (!silent) {
+        const tb = document.getElementById('pos-sales-table');
+        if (tb) tb.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--danger);padding:1.5rem;">Erreur liste : ${(e && e.message) ? e.message : e}</td></tr>`;
+      }
       done();
     })
     .getQuickSalesList(token);
@@ -3543,6 +3551,36 @@ function printPOSReceipt(d) {
       if (page === "pos-system") refreshPOSData();
     };
   }
+})();
+
+// ====================================================
+// AUTO-REFRESH — remonte les saisies des autres postes sans clic.
+// Ne tourne que sur la vue active, onglet visible et utilisateur connecté
+// (pour économiser le quota Apps Script). Échec silencieux.
+// ====================================================
+(function() {
+  var AUTO_REFRESH_MS = 45000; // 45 s
+  function activePage() {
+    var el = document.querySelector('.nav-btn[data-page].active');
+    return el ? el.getAttribute('data-page') : null;
+  }
+  function tick() {
+    if (document.hidden) return; // onglet en arrière-plan : pas de quota gaspillé
+    if (typeof getAuthToken === "function" && !getAuthToken()) return; // pas connecté
+    var page = activePage();
+    try {
+      if (page === "pos-system" && typeof refreshPOSData === "function") {
+        refreshPOSData(true);
+      } else if (page === "dashboard" && typeof loadCommercialStats === "function") {
+        loadCommercialStats(true);
+      }
+    } catch (e) { /* silencieux : le prochain cycle réessaiera */ }
+  }
+  setInterval(tick, AUTO_REFRESH_MS);
+  // Rafraîchit immédiatement quand l'utilisateur revient sur l'onglet
+  document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) tick();
+  });
 })();
 
 
