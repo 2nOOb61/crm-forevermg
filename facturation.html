@@ -704,9 +704,20 @@
           <!-- Saisie commande -->
           <div class="card">
             <h3 class="text-lg font-bold mb-4">Enregistrer une Vente</h3>
-            <p class="text-sm mb-2" style="color:var(--text-muted);">Collez ici les informations du commercial :</p>
-            <textarea id="pos-raw-input" class="input h-52 font-mono text-sm"
-              placeholder="Client #13103&#10;Client : Mr Fabien&#10;Contact : 034 xx xx xx&#10;Lieu : Antananarivo&#10;Commandes : 2x Produit A&#10;Total : 150000&#10;Avance : 100000&#10;Reste à payer : 50000"></textarea>
+
+            <label class="text-sm font-semibold" style="color:var(--text-muted);">Client <span style="color:#ef4444;">*</span></label>
+            <div class="flex gap-2 mt-1 mb-4">
+              <select id="pos-client" class="input" style="flex:1;">
+                <option value="">-- Choisir un client --</option>
+              </select>
+              <button type="button" onclick="openClientModal()" class="btn btn-secondary" title="Nouveau client">
+                <i class="fas fa-user-plus"></i>
+              </button>
+            </div>
+
+            <p class="text-sm mb-2" style="color:var(--text-muted);">Détails de la commande (collez ou tapez) :</p>
+            <textarea id="pos-raw-input" class="input h-40 font-mono text-sm"
+              placeholder="Lieu : Antananarivo&#10;Commandes : 2x Produit A&#10;Total : 150000&#10;Avance : 100000&#10;Reste à payer : 50000"></textarea>
             <div class="mt-4 flex flex-wrap gap-3">
               <button onclick="processQuickSale()" class="btn btn-primary">
                 <i class="fas fa-print"></i> Enregistrer &amp; Imprimer
@@ -1048,6 +1059,7 @@ document.addEventListener('DOMContentLoaded', function() {
       renderQuotes();
       renderInvoices();
       renderDeliveries();
+      try { populatePosClientSelect(); } catch(e){}
     }
 
     function renderDashboard(){
@@ -2688,6 +2700,19 @@ function clientOptions(selectedId){
   }).join("");
 }
 
+// Remplit le sélecteur client de la Vente Rapide (POS) depuis la liste Clients.
+function populatePosClientSelect(selectedId){
+  const sel = document.getElementById('pos-client');
+  if (!sel) return;
+  const cur = (selectedId != null && selectedId !== "") ? String(selectedId) : sel.value;
+  sel.innerHTML = '<option value="">-- Choisir un client --</option>' +
+    clients.map(c => {
+      const id = String(c.id || "");
+      const s = id === String(cur || "") ? "selected" : "";
+      return `<option value="${id}" ${s}>${escapeHtml(c.name || id)}</option>`;
+    }).join("");
+}
+
 function initModalTotals(type){
   updateTotals(type);
 }
@@ -2844,10 +2869,13 @@ function saveClientForm(id){
     return;
   }
   google.script.run
-    .withSuccessHandler(function(){
-      loadAllData();
+    .withSuccessHandler(function(saved){
       closeModal();
-      setLoading(false);
+      loadAllData(function(){
+        renderAll();
+        // Si on était sur la Vente Rapide, re-sélectionner le client fraîchement créé
+        try { populatePosClientSelect(saved && saved.id ? saved.id : undefined); } catch(e){}
+      });
     })
     .withFailureHandler(function(err){
       alert("Erreur enregistrement client: " + (err && err.message ? err.message : err));
@@ -3392,15 +3420,25 @@ if (typeof initAuth === "function") {
 // ==========================================
 
 function processQuickSale() {
+  // Client OBLIGATOIRE — issu de la liste Clients (plus de texte libre)
+  const clientSel = document.getElementById('pos-client');
+  const clientId = clientSel ? clientSel.value : "";
+  if (!clientId) {
+    alert("Sélectionnez d'abord le client (obligatoire). Utilisez le bouton + pour en créer un.");
+    if (clientSel) clientSel.focus();
+    return;
+  }
+  const clientObj = clients.find(c => String(c.id) === String(clientId)) || {};
+
   const rawText = document.getElementById('pos-raw-input').value;
-  if (!rawText.trim()) return alert("Le champ est vide !");
+  if (!rawText.trim()) return alert("Saisissez les détails de la commande (commandes, total, avance, reste).");
 
   const data = {
-    clientId:   (rawText.match(/Client\s*#(\d+)/) || [])[1] || "",
-    clientName: (rawText.match(/Client\s*:\s*(.+)/) || [])[1]?.trim() || "",
-    contact:    (rawText.match(/Contact\s*:\s*(.+)/) || [])[1]?.trim() || "",
-    lieu:       (rawText.match(/Lieu\s*:\s*(.+)/) || [])[1]?.trim() || "",
-    items:      (rawText.match(/Commandes\s*:\s*([\s\S]*?)(?=Total)/) || [])[1]?.trim() || "",
+    clientId:   clientId,
+    clientName: clientObj.name || "",
+    contact:    clientObj.contact || clientObj.phone || (rawText.match(/Contact\s*:\s*(.+)/) || [])[1]?.trim() || "",
+    lieu:       (rawText.match(/Lieu\s*:\s*(.+)/) || [])[1]?.trim() || clientObj.address || "",
+    items:      (rawText.match(/Commandes?\s*:\s*([\s\S]*?)(?=Total)/) || [])[1]?.trim() || "",
     total:      Number((rawText.match(/Total\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0),
     avance:     Number((rawText.match(/Avance\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0),
     reste:      Number((rawText.match(/Reste(?:\s*à\s*payer)?\s*:\s*(\d[\d\s]*)/) || [])[1]?.replace(/\s/g,"") || 0)
@@ -3415,6 +3453,7 @@ function processQuickSale() {
       printPOSReceipt(data);
       refreshPOSData();
       document.getElementById('pos-raw-input').value = "";
+      if (clientSel) clientSel.value = "";
     })
     .withFailureHandler(function(err) {
       setLoading(false);
@@ -3630,7 +3669,7 @@ function printPOSReceipt(d) {
   if (typeof origShowPage === "function") {
     window.showPage = function(page) {
       origShowPage(page);
-      if (page === "pos-system") refreshPOSData();
+      if (page === "pos-system") { refreshPOSData(); populatePosClientSelect(); }
     };
   }
 })();

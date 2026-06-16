@@ -2559,14 +2559,22 @@ function getSalesSheet() {
   return sheet;
 }
 
-// Nom du commercial = utilisateur connecté (displayName sinon username)
+// Nom du commercial = utilisateur connecté (displayName sinon username sinon email)
 function commercialName_(user) {
   if (!user) return "";
-  return String(user.displayName || user.username || "").trim();
+  return String(user.displayName || user.username || user.email || "").trim();
 }
 
 function saveQuickSale(token, saleData) {
   var user = requireAuth(token);
+  saleData = saleData || {};
+  // Phase 1 — client OBLIGATOIRE (vraie référence à la feuille Clients)
+  if (!String(saleData.clientId || "").trim()) {
+    throw new Error("Client requis : sélectionnez un client avant d'enregistrer la vente.");
+  }
+  // Phase 1 — commercial TOUJOURS renseigné (= utilisateur connecté)
+  var com = commercialName_(user) || String(user.username || user.email || "").trim();
+  if (!com) throw new Error("Commercial introuvable : reconnectez-vous.");
   var sheet = getSalesSheet();
   sheet.appendRow([
     new Date(),
@@ -2578,7 +2586,7 @@ function saveQuickSale(token, saleData) {
     saleData.total,
     saleData.avance,
     saleData.reste,
-    commercialName_(user)
+    com
   ]);
   return { success: true };
 }
