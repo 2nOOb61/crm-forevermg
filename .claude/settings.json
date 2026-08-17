@@ -1,0 +1,30 @@
+{
+  "autoMode": {
+    "environment": [
+      "$defaults",
+      "### Org-wide",
+      "**Organization**: None configured",
+      "**Cloud provider(s)**: Google (Apps Script / Sheets / Drive / Gmail) — inferred from this repo's Google Apps Script backend",
+      "**Repository visibility**: assume private unless the remote host and repo name indicate otherwise, or a visibility check in the transcript shows public",
+      "**Internal sharing / snippet hosting**: None configured — treat public paste/gist services as outside the trust boundary",
+      "**Secrets management**: None configured",
+      "**Default / protected branches**: not queryable here — gh could not read visibility, rulesets, or protected branches for 2nOOb61/crm-forevermg",
+      "**CI/CD deploy targets**: None configured — deployment is manual via Google Apps Script web app per README",
+      "**Network posture**: None configured",
+      "**Source control**: The trusted repo and its remote(s) only (no additional orgs configured) — github.com/2nOOb61/crm-forevermg",
+      "**Trusted internal domains**: None configured",
+      "**Trusted cloud buckets**: None configured",
+      "**Key internal services**: None configured",
+      "**Internal package registry**: None configured",
+      "**Sensitive data locations & audiences**: any file or store holding personal data, confidential business data, credentials, regulated data, or similarly sensitive material; preserve exact handles when known and share only with audiences cleared at the [named+specifics] bar — note this is a CRM handling client quotes and purchase orders",
+      "**Data retention / declassification**: None configured",
+      "**Sensitive remote targets**: any namespace, host, or container whose name carries prod or production as a whole word or name segment (hyphen/underscore/dot-delimited — e.g. matches prod-db, not producer)",
+      "**Protected deployment namespaces / environments**: None configured — fall back to the Sensitive remote targets heuristic",
+      "**Protected IaC scopes**: IAM, RBAC, networking, quota, and node-pool resources; anything whose name or tag carries prod or production as a whole word or name segment",
+      "### User-specific",
+      "**Primary use of Claude Code**: software development",
+      "**Trusted repo**: github.com/2nOOb61/crm-forevermg (working directory C:\\Users\\Gino Ramiada\\Desktop\\crm-forevermg) and its configured remote(s)",
+      "**Org-specific CLIs**: clasp (Google Apps Script CLI) — seen in shell history (4x)"
+    ]
+  }
+}
