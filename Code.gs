@@ -756,7 +756,7 @@ function getGmailLeads() {
 
     baseQueries.forEach(q => {
       let threads = [];
-      try { threads = GmailApp.search(q, 0, 25); } catch(e) {}
+      try { threads = GmailApp.search(q, 0, 40); } catch(e) {}
 
       threads.forEach(thread => {
         if (seen[thread.getId()]) return;
@@ -793,6 +793,7 @@ function getGmailLeads() {
           categorie,
           priorite,
           date:       Utilities.formatDate(lastMsg.getDate(), "Indian/Antananarivo", "dd/MM/yyyy HH:mm"),
+          ts:         lastMsg.getDate().getTime(), // pour tri par date (plus récent d'abord)
           snippet:    snippet.substring(0, 250),
           unread:     thread.isUnread(),
           important:  thread.isImportant(),
@@ -802,14 +803,17 @@ function getGmailLeads() {
       });
     });
 
-    // Trier : urgents > importants > non lus > date
+    // Trier : DATE d'abord (plus récent en haut) pour que les nouveaux mails
+    // soient toujours visibles. La priorité/importance ne sert qu'à départager
+    // deux mails de même date (l'urgence reste signalée par les badges + filtres,
+    // et les vieux mails sans réponse ont leur propre carte « Relances »).
     const prioOrder = { "Urgent": 0, "Haute": 1, "Moyenne": 2, "Basse": 3 };
     results.sort((a, b) => {
+      const ta = a.ts || 0, tb = b.ts || 0;
+      if (tb !== ta) return tb - ta; // date décroissante
       const pa = prioOrder[a.priorite] ?? 9;
       const pb = prioOrder[b.priorite] ?? 9;
       if (pa !== pb) return pa - pb;
-      if (a.important && !b.important) return -1;
-      if (!a.important && b.important) return  1;
       if (a.unread && !b.unread) return -1;
       if (!a.unread && b.unread) return  1;
       return 0;
@@ -817,7 +821,7 @@ function getGmailLeads() {
 
     return {
       ok:       true,
-      data:     results.slice(0, 40),
+      data:     results.slice(0, 60),
       doublons: doublons,
       stats: {
         total:    results.length,

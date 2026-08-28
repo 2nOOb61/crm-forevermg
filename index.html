@@ -539,6 +539,19 @@ textarea{resize:vertical;min-height:70px}
 </section>
 
 <!-- ═══════════ GMAIL ═══════════ -->
+<style>
+#sec-gmail .gmail-kpi{cursor:pointer;transition:transform .08s,box-shadow .08s;user-select:none}
+#sec-gmail .gmail-kpi:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(0,0,0,.08)}
+#sec-gmail .gmail-kpi.active{outline:2px solid var(--green);outline-offset:1px}
+#sec-gmail .cockpit-h{font-size:11px;font-weight:700;color:var(--text-2);text-transform:uppercase;letter-spacing:.04em;margin-bottom:10px}
+#sec-gmail .cbar-row{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+#sec-gmail .cbar-row[onclick]{cursor:pointer}
+#sec-gmail .cbar-row[onclick]:hover .cbar-label{color:var(--green)}
+#sec-gmail .cbar-label{flex:0 0 118px;font-size:12px;color:var(--text-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#sec-gmail .cbar-track{flex:1;height:8px;background:rgba(148,163,184,.18);border-radius:6px;overflow:hidden}
+#sec-gmail .cbar-fill{height:100%;border-radius:6px;min-width:3px;transition:width .3s}
+#sec-gmail .cbar-count{flex:0 0 30px;text-align:right;font-size:12px;font-weight:700;color:var(--text-2)}
+</style>
 <section class="section" id="sec-gmail">
   <div class="page-title">
     <svg viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
@@ -558,25 +571,38 @@ textarea{resize:vertical;min-height:70px}
       <option value="Relance">Relance</option>
       <option value="Paiement">Paiement</option>
       <option value="Livraison">Livraison</option>
+      <option value="Réclamation">Réclamation</option>
       <option value="Autre">Autre</option>
     </select>
     <select id="gmailBoiteFilter" onchange="filterGmailDisplay()">
       <option value="tous">Toutes boîtes</option>
       <option value="commercial">commercial4evermg</option>
       <option value="contact">contact4evermg</option>
+      <option value="principale">Autre / principale</option>
     </select>
     <span style="font-size:12px;color:var(--text-3)" id="gmailInfo">Cliquez sur Actualiser</span>
   </div>
 
-  <!-- Stats bar -->
-  <div id="gmailStats" style="display:none;margin-bottom:12px">
-    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(110px,1fr))">
-      <div class="kpi"><div class="kpi-label">Total</div><div class="kpi-val blue" id="gs-total">0</div></div>
-      <div class="kpi"><div class="kpi-label">Non lus</div><div class="kpi-val orange" id="gs-unread">0</div></div>
-      <div class="kpi"><div class="kpi-label">Urgents</div><div class="kpi-val red" id="gs-urgent">0</div></div>
-      <div class="kpi"><div class="kpi-label">Doublons</div><div class="kpi-val amber" id="gs-doublons">0</div></div>
-      <div class="kpi"><div class="kpi-label">commercial@</div><div class="kpi-val green" id="gs-commercial">0</div></div>
-      <div class="kpi"><div class="kpi-label">contact@</div><div class="kpi-val green" id="gs-contact">0</div></div>
+  <!-- ═══ COCKPIT GMAIL ═══ -->
+  <div id="gmailStats" style="display:none;margin-bottom:14px">
+    <div class="kpi-grid" style="grid-template-columns:repeat(auto-fit,minmax(120px,1fr));margin-bottom:12px">
+      <div class="kpi gmail-kpi" data-quick="all"     onclick="cockpitQuick('all',this)"     title="Tout afficher"><div class="kpi-label">📬 Total</div><div class="kpi-val blue"   id="gs-total">0</div></div>
+      <div class="kpi gmail-kpi" data-quick="today"   onclick="cockpitQuick('today',this)"   title="Reçus aujourd'hui"><div class="kpi-label">🆕 Aujourd'hui</div><div class="kpi-val green" id="gs-today">0</div></div>
+      <div class="kpi gmail-kpi" data-quick="unread"  onclick="cockpitQuick('unread',this)"  title="Non lus seulement"><div class="kpi-label">✉️ Non lus</div><div class="kpi-val orange" id="gs-unread">0</div></div>
+      <div class="kpi gmail-kpi" data-quick="urgent"  onclick="cockpitQuick('urgent',this)"  title="Urgents seulement"><div class="kpi-label">🔴 Urgents</div><div class="kpi-val red"    id="gs-urgent">0</div></div>
+      <div class="kpi gmail-kpi" data-quick="doublons" onclick="cockpitQuick('doublons',this)" title="Voir les doublons"><div class="kpi-label">⚠️ Doublons</div><div class="kpi-val amber" id="gs-doublons">0</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px">
+      <div class="card"><div class="card-body" style="padding:14px 16px">
+        <div class="cockpit-h">Par catégorie</div>
+        <div id="cockpitCats"></div>
+      </div></div>
+      <div class="card"><div class="card-body" style="padding:14px 16px">
+        <div class="cockpit-h">Par priorité</div>
+        <div id="cockpitPrios"></div>
+        <div class="cockpit-h" style="margin-top:16px">Par boîte</div>
+        <div id="cockpitBoites"></div>
+      </div></div>
     </div>
   </div>
 
@@ -1737,18 +1763,8 @@ async function loadGmail() {
   }
   STATE.gmail = res.data || [];
 
-  // Stats
-  if (res.stats) {
-    document.getElementById("gs-total").textContent     = res.stats.total;
-    document.getElementById("gs-unread").textContent    = res.stats.unread;
-    document.getElementById("gs-urgent").textContent    = res.stats.urgent;
-    document.getElementById("gs-doublons").textContent  = res.stats.doublons;
-    document.getElementById("gs-commercial").textContent= res.stats.parBoite?.commercial || 0;
-    document.getElementById("gs-contact").textContent   = res.stats.parBoite?.contact    || 0;
-    document.getElementById("gmailStats").style.display = "block";
-    document.getElementById("gmailInfo").textContent    =
-      `${res.stats.total} e-mail(s) · ${res.stats.unread} non lus · ${res.stats.doublons} doublons`;
-  }
+  // Cockpit (tuiles + répartitions)
+  renderCockpit(res);
 
   // Doublons alert
   if (res.doublons && res.doublons.length > 0) {
@@ -1763,13 +1779,104 @@ async function loadGmail() {
   filterGmailDisplay();
 }
 
+let __gmailQuick = "all"; // all | today | unread | urgent
+
 function filterGmailDisplay() {
   const cat   = document.getElementById("gmailCatFilter")?.value   || "tous";
   const boite = document.getElementById("gmailBoiteFilter")?.value || "tous";
-  let rows = STATE.gmail;
+  let rows = STATE.gmail || [];
   if (cat   !== "tous") rows = rows.filter(m => m.categorie === cat);
   if (boite !== "tous") rows = rows.filter(m => m.boite     === boite);
+  if (__gmailQuick === "today")  rows = rows.filter(isGmailToday);
+  if (__gmailQuick === "unread") rows = rows.filter(m => m.unread);
+  if (__gmailQuick === "urgent") rows = rows.filter(m => m.priorite === "Urgent");
+  const info = document.getElementById("gmailInfo");
+  if (info) info.textContent = `${rows.length} affiché(s) sur ${(STATE.gmail||[]).length}`;
   renderGmailList(rows);
+}
+
+// ── Cockpit Gmail ──────────────────────────────────────────
+const CAT_COLOR = {
+  "Demande devis":"#f59e0b","Commande":"#16a34a","Facturation":"#2563eb",
+  "Paiement":"#d97706","Livraison":"#2563eb","Relance":"#f59e0b",
+  "Urgent":"#dc2626","Réclamation":"#dc2626","Autre":"#94a3b8"
+};
+const PRIO_COLOR = { "Urgent":"#dc2626","Haute":"#f59e0b","Moyenne":"#2563eb","Basse":"#94a3b8" };
+
+function gmailTodayStr() {
+  const d = new Date(), p = n => String(n).padStart(2,"0");
+  return p(d.getDate()) + "/" + p(d.getMonth()+1) + "/" + d.getFullYear();
+}
+function isGmailToday(m) { return String(m.date||"").slice(0,10) === gmailTodayStr(); }
+function jsq(s) { return String(s).replace(/\\/g,"\\\\").replace(/'/g,"\\'"); }
+
+function cockpitBars(containerId, entries, colorFn, clickFn) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const shown = entries.filter(e => e[1] > 0);
+  const max = Math.max(1, ...shown.map(e => e[1]));
+  el.innerHTML = shown.length ? shown.map(([label, count]) => `
+    <div class="cbar-row" ${clickFn ? clickFn(label) : ""}>
+      <div class="cbar-label" title="${esc(label)}">${esc(label)}</div>
+      <div class="cbar-track"><div class="cbar-fill" style="width:${Math.round(count/max*100)}%;background:${colorFn(label)}"></div></div>
+      <div class="cbar-count">${count}</div>
+    </div>`).join("") : `<div style="font-size:12px;color:var(--text-3)">Aucun</div>`;
+}
+
+function renderCockpit(res) {
+  const g  = STATE.gmail || [];
+  const st = res.stats || {};
+  const setTxt = (id, v) => { const e = document.getElementById(id); if (e) e.textContent = v; };
+  const todayC = g.filter(isGmailToday).length;
+  setTxt("gs-total",    st.total   ?? g.length);
+  setTxt("gs-today",    todayC);
+  setTxt("gs-unread",   st.unread  ?? g.filter(m => m.unread).length);
+  setTxt("gs-urgent",   st.urgent  ?? g.filter(m => m.priorite === "Urgent").length);
+  setTxt("gs-doublons", st.doublons ?? (res.doublons ? res.doublons.length : 0));
+
+  const catCount = {}, prio = { Urgent:0, Haute:0, Moyenne:0, Basse:0 }, boite = { commercial:0, contact:0, principale:0 };
+  g.forEach(m => {
+    catCount[m.categorie] = (catCount[m.categorie]||0) + 1;
+    if (prio[m.priorite]  != null) prio[m.priorite]++;
+    if (boite[m.boite]    != null) boite[m.boite]++;
+  });
+  const catEntries = Object.entries(catCount).sort((a,b) => b[1]-a[1]);
+  cockpitBars("cockpitCats", catEntries, l => CAT_COLOR[l]||"#94a3b8",
+    l => `onclick="cockpitSetCat('${jsq(l)}')" title="Filtrer : ${esc(l)}"`);
+  cockpitBars("cockpitPrios",
+    [["Urgent",prio.Urgent],["Haute",prio.Haute],["Moyenne",prio.Moyenne],["Basse",prio.Basse]],
+    l => PRIO_COLOR[l]||"#94a3b8", null);
+  cockpitBars("cockpitBoites",
+    [["commercial4evermg",boite.commercial],["contact4evermg",boite.contact],["Autre / principale",boite.principale]],
+    l => l[0]==="c" && l[1]==="o" && l.startsWith("commercial") ? "#16a34a" : l.startsWith("contact") ? "#2563eb" : "#94a3b8",
+    l => `onclick="cockpitSetBoite('${l.startsWith("commercial")?"commercial":l.startsWith("contact")?"contact":"principale"}')" title="Filtrer : ${esc(l)}"`);
+
+  document.getElementById("gmailStats").style.display = "block";
+  filterGmailDisplay();
+}
+
+function cockpitQuick(kind, el) {
+  if (kind === "doublons") {
+    const a = document.getElementById("gmailDoublonsAlert");
+    if (a && a.style.display !== "none") a.scrollIntoView({ behavior:"smooth", block:"center" });
+    else showToast("Aucun doublon détecté");
+    return;
+  }
+  __gmailQuick = (__gmailQuick === kind && kind !== "all") ? "all" : kind;
+  document.querySelectorAll("#gmailStats .gmail-kpi").forEach(k => k.classList.remove("active"));
+  if (__gmailQuick !== "all" && el) el.classList.add("active");
+  filterGmailDisplay();
+}
+
+function cockpitSetCat(cat) {
+  const s = document.getElementById("gmailCatFilter");
+  if (s) s.value = cat;
+  filterGmailDisplay();
+}
+function cockpitSetBoite(boite) {
+  const s = document.getElementById("gmailBoiteFilter");
+  if (s) s.value = boite;
+  filterGmailDisplay();
 }
 
 const CAT_BADGE = {
