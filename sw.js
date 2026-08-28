@@ -1,5 +1,6 @@
-// FOREVER MG CRM — Service Worker v3.0
-const CACHE = "forevermg-crm-v3";
+// FOREVER MG CRM — Service Worker v4.0
+// ⚠️ Bumper CACHE ENSEMBLE avec APP_VERSION (index.html) à chaque déploiement front.
+const CACHE = "forevermg-crm-v4";
 const ASSETS = [
   "./index.html",
   "./manifest.json"
@@ -16,7 +17,20 @@ self.addEventListener("activate", e => {
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
+     .then(() => self.clients.matchAll())
+     .then(clients => clients.forEach(c => c.postMessage({ type: "SW_UPDATED", version: CACHE })))
   );
+});
+
+// Messages de l'app : activation immédiate + vidage cache à la demande
+self.addEventListener("message", e => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
+  if (e.data && e.data.type === "CLEAR_CACHE") {
+    e.waitUntil(
+      caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))))
+        .then(() => { if (e.source) e.source.postMessage({ type: "CACHE_CLEARED" }); })
+    );
+  }
 });
 
 self.addEventListener("fetch", e => {

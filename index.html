@@ -310,6 +310,10 @@ textarea{resize:vertical;min-height:70px}
     4EVER<span>MG</span>
   </div>
   <div class="topbar-spacer"></div>
+  <span id="crmVersion" role="button" tabindex="0"
+        title="Version du CRM — doit être identique sur tous les postes. Cliquer pour forcer la mise à jour (vide le cache)."
+        onclick="forceAppRefresh()" onkeydown="if(event.key==='Enter')forceAppRefresh()"
+        style="margin-right:10px;display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.35);border-radius:20px;color:#fff;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap">v…</span>
   <div class="topbar-sync" id="syncStatus">
     <span class="dot" id="statusDot"></span>
     <span id="statusText">Chargement…</span>
@@ -2321,11 +2325,118 @@ document.querySelectorAll(".overlay").forEach(ov => {
 // ============================================================
 //  INIT
 // ============================================================
+// ============================================================
+//  VERSION · MISE À JOUR AUTO · VIDAGE CACHE  (même concept que le POS)
+//  ⚠️ À CHAQUE DÉPLOIEMENT FRONT, bumper ENSEMBLE :
+//     1) APP_VERSION ci-dessous       (déclenche le vidage auto du cache client)
+//     2) sw.js → CACHE ('forevermg-crm-vXXX')
+// ============================================================
+const APP_VERSION = "1 · 2026-08-28";
+
+function _renderVersionBadge() {
+  const el = document.getElementById("crmVersion");
+  if (el) el.textContent = "v" + APP_VERSION;
+}
+
+// Un modal ouvert = saisie en cours → on ne recharge pas de force
+function _isBusy() { return !!document.querySelector(".modal.open"); }
+
+// Force une MAJ propre : vide les caches + désenregistre le SW + recharge.
+async function forceAppRefresh() {
+  try { showToast("Mise à jour en cours…"); } catch(e) {}
+  try {
+    if ("serviceWorker" in navigator && navigator.serviceWorker.controller)
+      navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHE" });
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch(e) { console.warn("[forceAppRefresh]", e); }
+  setTimeout(() => location.reload(true), 600);
+}
+
+// Vide le cache AUTOMATIQUEMENT quand APP_VERSION change (= nouveau déploiement).
+async function _autoClearCache() {
+  const stored = localStorage.getItem("crm-app-version");
+  if (stored === APP_VERSION) return;      // déjà à jour → rien à faire
+  if (!stored) {                            // 1re visite → rien de périmé à vider
+    try { localStorage.setItem("crm-app-version", APP_VERSION); } catch(e) {}
+    return;
+  }
+  // Nouvelle build sur un poste déjà utilisé → préserver la session avant nettoyage
+  const tok = localStorage.getItem(AUTH_TOKEN_KEY);
+  const usr = localStorage.getItem(AUTH_USER_KEY);
+  try {
+    if ("serviceWorker" in navigator && navigator.serviceWorker.controller)
+      navigator.serviceWorker.controller.postMessage({ type: "CLEAR_CACHE" });
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map(k => caches.delete(k)));
+    }
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map(r => r.unregister()));
+    }
+  } catch(e) { console.warn("[Cache] nettoyage:", e); }
+  try {
+    if (tok) localStorage.setItem(AUTH_TOKEN_KEY, tok);
+    if (usr) localStorage.setItem(AUTH_USER_KEY, usr);
+  } catch(e) {}
+  localStorage.setItem("crm-app-version", APP_VERSION);
+  if (stored) { // pas la toute première installation → recharger sur la nouvelle build
+    console.log(`[Cache] v${stored} → v${APP_VERSION} — vidage auto + rechargement`);
+    try { showToast("Nouvelle version — cache vidé, rechargement…"); } catch(e) {}
+    setTimeout(() => location.reload(true), 1500);
+  }
+}
+
+// Bannière discrète quand un nouveau SW est prêt pendant une saisie.
+function showUpdateBanner() {
+  if (document.getElementById("crmUpdateBanner")) return;
+  const d = document.createElement("div");
+  d.id = "crmUpdateBanner";
+  d.style.cssText = "position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:4000;display:flex;align-items:center;gap:12px;background:#1a4a3a;color:#fff;padding:10px 16px;border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:13px";
+  d.innerHTML = "🔄 Nouvelle version disponible <button onclick=\"forceAppRefresh()\" style=\"background:#fff;color:#1a4a3a;border:none;padding:6px 12px;border-radius:6px;font-weight:700;cursor:pointer\">Mettre à jour</button>";
+  document.body.appendChild(d);
+}
+
+function initPWA() {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+    const _safeUpdate = () => { try { const p = reg.update(); if (p && p.catch) p.catch(() => {}); } catch(e) {} };
+    _safeUpdate();
+    setInterval(_safeUpdate, 60000); // vérifie une MAJ chaque minute
+    reg.addEventListener("updatefound", () => {
+      const nw = reg.installing;
+      if (!nw) return;
+      nw.addEventListener("statechange", () => {
+        if (nw.state === "installed" && navigator.serviceWorker.controller) {
+          if (_isBusy()) showUpdateBanner();          // saisie en cours → proposer
+          else nw.postMessage({ type: "SKIP_WAITING" }); // sinon activer tout de suite
+        } else if (nw.state === "installed") {
+          nw.postMessage({ type: "SKIP_WAITING" });      // 1er install
+        }
+      });
+    });
+  }).catch(err => console.log("[PWA] SW error:", err));
+
+  navigator.serviceWorker.addEventListener("message", ev => {
+    if (ev.data && ev.data.type === "SW_UPDATED") showUpdateBanner();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   const lf = document.getElementById("crm-login-form");
   if (lf) lf.addEventListener("submit", e => { e.preventDefault(); submitLogin(); });
   const sf = document.getElementById("crm-setup-form");
   if (sf) sf.addEventListener("submit", e => { e.preventDefault(); submitSetup(); });
+  _renderVersionBadge();
+  initPWA();
+  _autoClearCache();
   bootAuth();
 });
 </script>
