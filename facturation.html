@@ -801,7 +801,11 @@ document.addEventListener('DOMContentLoaded', function() {
 // Le transport réel est google.script.run : aucune URL à saisir.
 // (On ne demande PLUS l'URL : le prompt s'affichait à chaque collaborateur car
 //  le localStorage du bac à sable googleusercontent est vide/distinct du CRM.)
-window.GAS_URL = localStorage.getItem('facturepro_gas_url') || '';
+// URL de l'application web qui sert reellement cette page (meme deploiement
+// que le CRM). Sert de secours quand la page est ouverte depuis une copie
+// statique : GitHub Pages heberge aussi facturation.html, mais sans backend.
+window.GAS_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbxB0TRHMOCYb87P2ZWfxEZj-0EDrpH0kUbPy2b35ufGrhJ8K5PVJVcDq4N7HSoiJlczQA/exec";
+window.GAS_URL = localStorage.getItem('facturepro_gas_url') || window.GAS_WEBAPP_URL;
 document.addEventListener('DOMContentLoaded', function() {
   const el = document.getElementById('fact-gas-status');
   var connected = (typeof google !== "undefined" && google.script && google.script.run);
@@ -923,8 +927,19 @@ document.addEventListener('DOMContentLoaded', function() {
 
     let loadAllDataTimer = null;
 
+    // La Facturation ne fonctionne QUE servie par Apps Script (transport
+    // google.script.run). Ouverte depuis la copie GitHub Pages — un vieux
+    // favori, par exemple — on bascule sur l'application web au lieu
+    // d'afficher une erreur sans issue.
     function ensureScriptRun(){
       if (typeof google === "undefined" || !google.script || !google.script.run){
+        const host = String(location.hostname || "");
+        const servedByGas = /(^|\.)google(usercontent)?\.com$/.test(host);
+        if (!servedByGas && window.GAS_WEBAPP_URL) {
+          setLoading(true, "Ouverture de l'application Facturation...");
+          location.replace(window.GAS_WEBAPP_URL + "?interface=1");
+          return false;
+        }
         setLoading(false);
         alert("google.script.run introuvable. Ouvrez l'app via Apps Script (Déployer > Application Web).");
         return false;
