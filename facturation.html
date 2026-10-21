@@ -590,24 +590,35 @@
       <div id="page-invoices" class="page hidden">
         <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Factures</h2>
-          <button class="btn btn-primary" onclick="openInvoiceModal()"><i class="fas fa-plus"></i> Nouvelle facture</button>
+          <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+            <button class="btn btn-secondary" onclick="openInvoiceModal(null, 'proforma')" title="Document commercial non comptable"><i class="fas fa-file-contract"></i> Nouvelle proforma</button>
+            <button class="btn btn-primary" onclick="openInvoiceModal()"><i class="fas fa-plus"></i> Nouvelle facture</button>
+          </div>
         </div>
         <div class="card">
           <div class="mb-4 flex flex-wrap gap-4">
             <input type="text" class="input" style="max-width: 300px;" placeholder="Rechercher..." id="invoiceSearch" oninput="filterInvoices()">
+            <select class="input" style="max-width: 220px;" id="invoiceTypeFilter" onchange="filterInvoices()">
+              <option value="">Tous les types</option>
+              <option value="invoice">Factures définitives</option>
+              <option value="proforma">Factures proforma</option>
+              <option value="acompte">Factures d'acompte</option>
+            </select>
             <select class="input" style="max-width: 200px;" id="invoiceStatusFilter" onchange="filterInvoices()">
               <option value="">Tous les statuts</option>
               <option value="pending">En attente</option>
               <option value="partial">Partiel</option>
               <option value="paid">Payée</option>
               <option value="overdue">En retard</option>
+              <option value="converted">Converti</option>
             </select>
           </div>
           <div class="table-container">
             <table>
               <thead>
                 <tr>
-                  <th>N° Facture</th>
+                  <th>N°</th>
+                  <th>Type</th>
                   <th>Client</th>
                   <th>Date</th>
                   <th>Montant TTC</th>
@@ -1065,8 +1076,11 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderDashboard(){
       document.getElementById("stat-clients").textContent = clients.length;
       document.getElementById("stat-quotes").textContent = quotes.length;
-      const unpaid = invoices.filter(i => ["pending","partial","overdue"].includes(String(i.status || "").toLowerCase()));
-      const paid = invoices.filter(i => String(i.status || "").toLowerCase() === "paid");
+      // Proformas et factures d'acompte exclues : l'acompte est déjà déduit du
+      // reste à payer de la facture définitive (pas de double comptage).
+      const real = realInvoices();
+      const unpaid = real.filter(i => ["pending","partial","overdue"].includes(String(i.status || "").toLowerCase()));
+      const paid = real.filter(i => String(i.status || "").toLowerCase() === "paid");
       const unpaidTotal = unpaid.reduce((sum, inv) => sum + getInvoiceDue(inv), 0);
       const paidTotal = paid.reduce((sum, inv) => sum + getInvoiceTotal(inv), 0);
       document.getElementById("stat-unpaid").textContent = formatAr(unpaidTotal);
@@ -1201,6 +1215,8 @@ document.addEventListener('DOMContentLoaded', function() {
           <td class="flex gap-2">
             <button class="btn btn-secondary" onclick="openQuoteModal('${q.id}')"><i class="fas fa-pen"></i></button>
             <button class="btn btn-secondary" onclick="printDocument('quote', '${q.id}')" title="Imprimer"><i class="fas fa-print"></i></button>
+            <button class="btn btn-secondary" onclick="createProformaFromQuote('${q.id}')" title="Créer une facture proforma"><i class="fas fa-file-contract"></i></button>
+            <button class="btn btn-secondary" onclick="openAcompteModal('quote', '${q.id}')" title="Créer une facture d'acompte"><i class="fas fa-percent"></i></button>
             <button class="btn btn-success" ${isConverted ? "disabled" : ""} onclick="convertQuoteToInvoice('${q.id}')" title="Convertir en facture"><i class="fas fa-file-invoice"></i></button>
             <button class="btn btn-danger" onclick="deleteQuote('${q.id}')"><i class="fas fa-trash"></i></button>
           </td>
@@ -1214,27 +1230,39 @@ document.addEventListener('DOMContentLoaded', function() {
       tbody.innerHTML = "";
       const rows = Array.isArray(list) ? list.slice() : [];
       if (!rows.length) {
-        renderEmptyRow(tbody, 7, "Aucune facture");
+        renderEmptyRow(tbody, 8, "Aucune facture");
         return;
       }
       rows.sort(sortByDateDesc);
       rows.forEach(inv => {
-        const source = inv.sourceQuoteId ? ("Devis " + (getQuoteNumberById(inv.sourceQuoteId) || inv.sourceQuoteId)) : "-";
+        const docType = invoiceDocType(inv);
         const status = String(inv.status || "").toLowerCase();
+        const source = invoiceSourceLabel(inv);
+        let actions = `
+            <button class="btn btn-secondary" onclick="openInvoiceModal('${inv.id}')" title="Modifier"><i class="fas fa-pen"></i></button>
+            <button class="btn btn-secondary" onclick="printDocument('invoice', '${inv.id}')" title="Imprimer"><i class="fas fa-print"></i></button>`;
+        if (docType === "invoice") {
+          actions += `
+            <button class="btn btn-secondary" onclick="openAcompteModal('invoice', '${inv.id}')" title="Créer une facture d'acompte"><i class="fas fa-percent"></i></button>
+            <button class="btn btn-success" onclick="convertInvoiceToDelivery('${inv.id}')" title="Convertir en BL"><i class="fas fa-truck"></i></button>`;
+        } else if (docType === "proforma") {
+          const done = status === "converted";
+          actions += `
+            <button class="btn btn-secondary" onclick="openAcompteModal('invoice', '${inv.id}')" title="Créer une facture d'acompte"><i class="fas fa-percent"></i></button>
+            <button class="btn btn-success" ${done ? "disabled" : ""} onclick="convertProformaToInvoice('${inv.id}')" title="Convertir en facture définitive"><i class="fas fa-file-invoice-dollar"></i></button>`;
+        }
+        actions += `
+            <button class="btn btn-danger" onclick="deleteInvoice('${inv.id}')" title="Supprimer"><i class="fas fa-trash"></i></button>`;
         const tr = document.createElement("tr");
         tr.innerHTML = `
           <td class="font-semibold">${escapeHtml(inv.number || inv.id || "")}</td>
+          <td>${docTypeBadge(docType)}</td>
           <td>${escapeHtml(getClientName(inv.clientId))}</td>
           <td>${escapeHtml(formatDate(inv.date))}</td>
           <td>${formatAr(getInvoiceTotal(inv))}</td>
           <td>${statusBadge("invoice", status)}</td>
           <td>${escapeHtml(source)}</td>
-          <td class="flex gap-2">
-            <button class="btn btn-secondary" onclick="openInvoiceModal('${inv.id}')"><i class="fas fa-pen"></i></button>
-            <button class="btn btn-secondary" onclick="printDocument('invoice', '${inv.id}')" title="Imprimer"><i class="fas fa-print"></i></button>
-            <button class="btn btn-success" onclick="convertInvoiceToDelivery('${inv.id}')" title="Convertir en BL"><i class="fas fa-truck"></i></button>
-            <button class="btn btn-danger" onclick="deleteInvoice('${inv.id}')"><i class="fas fa-trash"></i></button>
-          </td>
+          <td class="flex gap-2">${actions}</td>
         `;
         tbody.appendChild(tr);
       });
@@ -1295,7 +1323,7 @@ document.addEventListener('DOMContentLoaded', function() {
     function renderPendingInvoices(){
       const container = document.getElementById("pending-invoices");
       if (!container) return;
-      const rows = invoices
+      const rows = realInvoices()
         .filter(i => ["pending","partial","overdue"].includes(String(i.status || "").toLowerCase()))
         .slice()
         .sort(sortByDateDesc)
@@ -1328,6 +1356,59 @@ document.addEventListener('DOMContentLoaded', function() {
       tbody.appendChild(tr);
     }
 
+    // ====================================================
+    // TYPES DE DOCUMENT DE FACTURATION
+    //  invoice  (FA-)  facture définitive — seule comptée dans les totaux
+    //  proforma (PRO-) document commercial, non comptable
+    //  acompte  (AC-)  facture d'acompte rattachée à un devis / une facture
+    // ====================================================
+    const DOC_TYPE_META = {
+      invoice:  { label: "Facture",  short: "Facture",  cls: "badge-paid" },
+      proforma: { label: "Proforma", short: "Proforma", cls: "badge-sent" },
+      acompte:  { label: "Acompte",  short: "Acompte",  cls: "badge-partial" }
+    };
+
+    function invoiceDocType(inv){
+      const t = String((inv && inv.docType) || "invoice").toLowerCase().trim();
+      return (t === "proforma" || t === "acompte") ? t : "invoice";
+    }
+
+    function docTypeBadge(docType){
+      const meta = DOC_TYPE_META[docType] || DOC_TYPE_META.invoice;
+      return `<span class="badge ${meta.cls}">${meta.short}</span>`;
+    }
+
+    // Factures définitives uniquement (hors proforma et acompte) : base de
+    // tous les totaux financiers, pour ne compter l'argent qu'une seule fois.
+    function realInvoices(){
+      return invoices.filter(inv => invoiceDocType(inv) === "invoice");
+    }
+
+    // Somme des acomptes déjà facturés sur un devis / une facture.
+    function acompteInvoicedFor(sourceId){
+      const id = String(sourceId || "");
+      if (!id) return 0;
+      return invoices
+        .filter(inv => invoiceDocType(inv) === "acompte"
+          && (String(inv.sourceQuoteId || "") === id || String(inv.parentInvoiceId || "") === id))
+        .reduce((sum, inv) => sum + getDocTotal(inv), 0);
+    }
+
+    // Libellé de la colonne "Source" d'une facture / proforma / acompte.
+    function invoiceSourceLabel(inv){
+      const parts = [];
+      if (inv && inv.parentInvoiceId) {
+        const parent = invoices.find(x => x.id === inv.parentInvoiceId);
+        const parentType = parent ? invoiceDocType(parent) : "invoice";
+        const parentLabel = (DOC_TYPE_META[parentType] || DOC_TYPE_META.invoice).short;
+        parts.push(parentLabel + " " + getInvoiceNumberById(inv.parentInvoiceId));
+      }
+      if (inv && inv.sourceQuoteId) {
+        parts.push("Devis " + (getQuoteNumberById(inv.sourceQuoteId) || inv.sourceQuoteId));
+      }
+      return parts.length ? parts.join(" · ") : "-";
+    }
+
     function statusBadge(type, status){
       const s = String(status || "").toLowerCase();
       const map = {
@@ -1340,7 +1421,8 @@ document.addEventListener('DOMContentLoaded', function() {
           pending: { cls: "badge-pending", label: "En attente" },
           partial: { cls: "badge-partial", label: "Partiel" },
           paid: { cls: "badge-paid", label: "Payée" },
-          overdue: { cls: "badge-overdue", label: "En retard" }
+          overdue: { cls: "badge-overdue", label: "En retard" },
+          converted: { cls: "badge-converted", label: "Converti" }
         },
         delivery: {
           draft: { cls: "badge-draft", label: "Brouillon" },
@@ -2281,7 +2363,17 @@ window.printDocument = function(type, id){
 };
 
 function buildPrintHtml(type, doc, client, company, settings){
-  const title = type === "quote" ? "Devis" : (type === "invoice" ? "Facture" : "Bon de livraison");
+  // kind = type réel du document imprimé :
+  // "quote" | "invoice" | "proforma" | "acompte" | "delivery"
+  const kind = (type === "invoice") ? invoiceDocType(doc) : type;
+  const isProforma = kind === "proforma";
+  const isAcompte = kind === "acompte";
+  const isFinalInvoice = kind === "invoice";
+  const title = kind === "quote" ? "Devis"
+    : isProforma ? "Facture proforma"
+    : isAcompte ? "Facture d'acompte"
+    : isFinalInvoice ? "Facture"
+    : "Bon de livraison";
   const number = doc.number || doc.id || "";
   const date = formatDate(doc.date);
   const totals = getDocTotals(doc);
@@ -2290,10 +2382,12 @@ function buildPrintHtml(type, doc, client, company, settings){
   const showPrices = !isDelivery;
   const discountRate = parseNumber(doc.discountRate || 0);
   const acompte = parseNumber(doc.acompte || 0);
-  const isInvoice = type === "invoice"; // FIX
+  const isInvoice = type === "invoice"; // facture, proforma ou acompte
   const totalTTC = parseNumber((totals && totals.totalTTC) || 0); // FIX
-  const finalTotal = isInvoice ? Math.max(0, totalTTC - acompte) : totalTTC; // FIX
-  const bodyClass = `layout-${type}`;
+  // Sur un acompte, le total imprimé EST le montant de l'acompte :
+  // rien n'est déduit, c'est la somme à régler.
+  const finalTotal = (isFinalInvoice || isProforma) ? Math.max(0, totalTTC - acompte) : totalTTC;
+  const bodyClass = `layout-${kind}`;
 
   const safe = (v) => escapeHtml(String(v ?? ""));
   const statusMap = {
@@ -2390,9 +2484,12 @@ function buildPrintHtml(type, doc, client, company, settings){
       const discountAmount = Math.max(0, (totals.subTotal || 0) * (discountRate / 100));
       totalsRows.push(`<div class="totals-row"><span>Remise</span><strong>${formatAr(discountAmount)}</strong></div>`);
     }
-    if (type === "invoice" && settings.showAcompte) {
+    if ((isFinalInvoice || isProforma) && settings.showAcompte) {
       totalsRows.push(`<div class="totals-row"><span>Acompte</span><strong>${formatAr(acompte)}</strong></div>`);
       totalsRows.push(`<div class="totals-row totals-grand"><span>Reste a payer</span><strong>${formatAr(Math.max(0, (totals.totalTTC || 0) - acompte))}</strong></div>`);
+    }
+    if (isAcompte) {
+      totalsRows.push(`<div class="totals-row totals-grand"><span>Net a payer</span><strong>${formatAr(totalTTC)}</strong></div>`);
     }
   }
   const totalsHtml = showPrices ? `
@@ -2401,14 +2498,58 @@ function buildPrintHtml(type, doc, client, company, settings){
     </div>
   ` : "";
   const amountWordsText = (isInvoice && typeof numberToWordsFr === "function") ? numberToWordsFr(finalTotal) : ""; // FIX
+  const amountWordsIntro = isProforma
+    ? "Arrêté la présente facture proforma à la somme de :"
+    : (isAcompte ? "Arrêté la présente facture d'acompte à la somme de :" : "Arrêté la présente facture à la somme de :");
   const amountWordsHtml = (isInvoice && amountWordsText) ? `
     <div class="doc-box" style="margin-top:12px;">
       <div style="font-size:13px; line-height:1.5;">
-        Arrêté la présente facture à la somme de :<br>
+        ${safe(amountWordsIntro)}<br>
         <strong>${safe(amountWordsText)} Ariary (${safe(formatAr(finalTotal))})</strong>
       </div>
     </div>
   ` : ""; // FIX
+
+  // --- Mentions propres a la proforma et a la facture d'acompte ---
+  let typeMentionHtml = "";
+  if (isProforma) {
+    typeMentionHtml = `
+    <div class="doc-box doc-mention" style="margin-top:12px;">
+      <div class="doc-section-title">Facture proforma</div>
+      <div style="font-size:13px; line-height:1.6;">
+        Document commercial établi à titre indicatif, valant offre de prix.
+        <strong>Il ne constitue pas une facture définitive</strong> et ne peut servir de justificatif comptable ou fiscal.
+        La facture définitive sera établie après acceptation de la commande.
+      </div>
+    </div>`;
+  } else if (isAcompte) {
+    const parentDoc = doc.parentInvoiceId ? invoices.find(x => x.id === doc.parentInvoiceId) : null;
+    const quoteDoc = doc.sourceQuoteId ? quotes.find(x => x.id === doc.sourceQuoteId) : null;
+    const srcDoc = parentDoc || quoteDoc;
+    let srcLabel = "";
+    if (parentDoc) {
+      const meta = DOC_TYPE_META[invoiceDocType(parentDoc)] || DOC_TYPE_META.invoice;
+      srcLabel = meta.label + " N° " + (parentDoc.number || parentDoc.id);
+    } else if (quoteDoc) {
+      srcLabel = "Devis N° " + (quoteDoc.number || quoteDoc.id);
+    }
+    const srcTotal = srcDoc ? getDocTotal(srcDoc) : 0;
+    const cumul = srcDoc ? acompteInvoicedFor(srcDoc.id) : totalTTC;
+    const rate = parseNumber(doc.acompteRate || 0);
+    const lines = [];
+    if (srcLabel) lines.push(`Acompte${rate ? " de " + rate + "%" : ""} sur <strong>${safe(srcLabel)}</strong>.`);
+    if (srcTotal > 0) lines.push(`Total de la commande : <strong>${safe(formatAr(srcTotal))}</strong>.`);
+    if (srcTotal > 0) lines.push(`Acomptes facturés à ce jour : ${safe(formatAr(cumul))} · solde à facturer : <strong>${safe(formatAr(Math.max(0, srcTotal - cumul)))}</strong>.`);
+    lines.push("Le solde fera l'objet d'une facture définitive déduisant le présent acompte.");
+    typeMentionHtml = `
+    <div class="doc-box doc-mention" style="margin-top:12px;">
+      <div class="doc-section-title">Facture d'acompte</div>
+      <div style="font-size:13px; line-height:1.6;">${lines.join("<br>")}</div>
+    </div>`;
+  }
+
+  const watermarkHtml = isProforma ? `<div class="doc-watermark">PROFORMA</div>` : "";
+  const clientSignLabel = isProforma ? "Bon pour accord - signature client" : "Signature client";
 
   return `
     <!DOCTYPE html>
@@ -2526,15 +2667,33 @@ function buildPrintHtml(type, doc, client, company, settings){
           font-size:12px;
           color: var(--text-muted);
         }
+        .doc-wrap{ position:relative; overflow:hidden; }
+        .doc-mention{ background:#f8fafc; }
+        .doc-watermark{
+          position:absolute;
+          top:45%;
+          left:50%;
+          transform: translate(-50%, -50%) rotate(-28deg);
+          font-size: 92px;
+          font-weight: 900;
+          letter-spacing: .08em;
+          color: rgba(37, 99, 235, .09);
+          white-space: nowrap;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .doc-wrap > *:not(.doc-watermark){ position:relative; z-index:1; }
         @media print{
           body{ background:#fff; margin:16px; }
           .doc-wrap{ border:none; border-radius:0; padding:0; }
           .btn, .sidebar, .mobile-header, #modalRoot { display:none !important; }
+          .doc-watermark{ -webkit-print-color-adjust: exact; print-color-adjust: exact; }
         }
       </style>
     </head>
     <body class="${bodyClass}">
       <div class="doc-wrap">
+        ${watermarkHtml}
         <div class="doc-grid">
           <div class="doc-box">
             <div style="display:flex; justify-content:space-between; gap:12px; align-items:center;">
@@ -2582,13 +2741,15 @@ function buildPrintHtml(type, doc, client, company, settings){
 
         ${totalsHtml}
 
+        ${typeMentionHtml}
+
         ${footerBlocks ? `<div class="doc-footer">${footerBlocks}</div>` : ""}
         ${responsibleBlock}
         ${amountWordsHtml}
 
         <!-- [EDIT START: Signature Placement] -->
         <div class="sign-grid">
-          <div class="sign-box">Signature client</div>
+          <div class="sign-box">${safe(clientSignLabel)}</div>
           <div class="sign-box" id="signature-entreprise-box" style="display:flex; flex-direction:column; justify-content:flex-end; gap:6px;">
             <div style="font-weight:600;">Signature entreprise</div>
             ${signatureImgHtml}
@@ -2633,7 +2794,9 @@ function filterQuotes(){
 function filterInvoices(){
   const q = normalizeText(document.getElementById("invoiceSearch")?.value || "");
   const status = normalizeText(document.getElementById("invoiceStatusFilter")?.value || "");
+  const docType = normalizeText(document.getElementById("invoiceTypeFilter")?.value || "");
   const filtered = invoices.filter(inv => {
+    if (docType && invoiceDocType(inv) !== docType) return false;
     if (status && normalizeText(inv.status) !== status) return false;
     if (!q) return true;
     const hay = [
@@ -3012,23 +3175,57 @@ function saveQuoteForm(id){
 // ---------------------------
 // Invoice modal + CRUD
 // ---------------------------
-window.openInvoiceModal = function(id){
+// presetType : "invoice" (defaut) | "proforma" — le type est figé après
+// création car il détermine la série de numérotation (FA / PRO / AC).
+window.openInvoiceModal = function(id, presetType){
   const inv = id ? invoices.find(i => i.id === id) : null;
   const isEdit = !!inv;
+  const docType = isEdit
+    ? invoiceDocType(inv)
+    : (String(presetType || "invoice") === "proforma" ? "proforma" : "invoice");
+  const typeLabel = (DOC_TYPE_META[docType] || DOC_TYPE_META.invoice).label;
   window.__editingInvoice = {
     id: inv?.id || null,
     items: (inv?.items || []).map(it => ({ description: it.description || "", qty: parseNumber(it.qty || 0), unitPrice: parseNumber(it.unitPrice || 0) })),
-    sourceQuoteId: inv?.sourceQuoteId || null
+    sourceQuoteId: inv?.sourceQuoteId || null,
+    docType,
+    parentInvoiceId: inv?.parentInvoiceId || null,
+    acompteRate: parseNumber(inv?.acompteRate || 0)
   };
+  const isAcompte = docType === "acompte";
+  const typeOptions = isAcompte
+    ? `<option value="acompte" selected>Facture d'acompte</option>`
+    : `
+        <option value="invoice" ${docType === "invoice" ? "selected" : ""}>Facture définitive</option>
+        <option value="proforma" ${docType === "proforma" ? "selected" : ""}>Facture proforma</option>`;
+  const typeHint = isEdit
+    ? `<div class="text-xs" style="color: var(--text-muted);">Type figé (numérotation ${(DOC_TYPE_META[docType] || DOC_TYPE_META.invoice).short}).</div>`
+    : `<div class="text-xs" style="color: var(--text-muted);">Proforma = document commercial, non comptable.</div>`;
+  const acompteBanner = isAcompte ? `
+          <div class="card mt-4" style="background: var(--bg-soft, #f8fafc);">
+            <div class="text-sm">
+              <strong>Facture d'acompte</strong>
+              ${window.__editingInvoice.acompteRate ? ` — ${window.__editingInvoice.acompteRate}% du document source` : ""}
+              ${inv && (inv.parentInvoiceId || inv.sourceQuoteId) ? ` · Source : ${escapeHtml(invoiceSourceLabel(inv))}` : ""}
+            </div>
+            <div class="text-xs mt-1" style="color: var(--text-muted);">
+              Le montant de l'acompte est porté par la ligne d'article. Le solde reste dû sur la facture définitive.
+            </div>
+          </div>` : "";
   const html = `
     <div class="modal-overlay" onclick="closeModal()">
       <div class="modal" onclick="event.stopPropagation()">
         <div class="flex justify-between items-center mb-4">
-          <h3 class="text-xl font-bold">${isEdit ? "Modifier la facture" : "Nouvelle facture"}</h3>
+          <h3 class="text-xl font-bold">${isEdit ? "Modifier : " + typeLabel : "Nouvelle " + (docType === "proforma" ? "proforma" : "facture")}</h3>
           <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
         </div>
         <form onsubmit="event.preventDefault(); saveInvoiceForm('${isEdit ? inv.id : ""}')">
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="text-sm">Type de document</label>
+              <select id="i_doctype" class="input" ${isEdit ? "disabled" : ""}>${typeOptions}</select>
+              ${typeHint}
+            </div>
             <div>
               <label class="text-sm">Numéro</label>
               <input id="i_number" class="input" value="${escapeHtml(inv?.number || "")}" placeholder="Auto">
@@ -3054,11 +3251,12 @@ window.openInvoiceModal = function(id){
               <label class="text-sm">Remise (%)</label>
               <input id="i_discount" type="number" step="0.01" min="0" class="input" value="${parseNumber(inv?.discountRate || 0)}" oninput="updateTotals('invoice')">
             </div>
-            <div>
-              <label class="text-sm">Acompte</label>
+            <div ${isAcompte ? 'style="display:none;"' : ""}>
+              <label class="text-sm">Acompte déjà réglé</label>
               <input id="i_acompte" type="number" step="1" min="0" class="input" value="${parseNumber(inv?.acompte || 0)}" oninput="updateTotals('invoice')">
             </div>
           </div>
+          ${acompteBanner}
           <div class="mt-4">
             <div class="flex justify-between items-center mb-2">
               <h4 class="font-semibold">Articles</h4>
@@ -3104,6 +3302,8 @@ function saveInvoiceForm(id){
   const items = window.__editingInvoice.items || [];
   if (items.some(it => !(it.description || "").trim())) return alert("Chaque ligne doit avoir une désignation.");
   const totals = computeTotals(items, discountRate);
+  const docTypeEl = document.getElementById("i_doctype");
+  const docType = docTypeEl ? docTypeEl.value : (window.__editingInvoice.docType || "invoice");
   const obj = {
     id: id || null,
     number: number || "",
@@ -3115,7 +3315,10 @@ function saveInvoiceForm(id){
     notes,
     totals,
     acompte,
-    discountRate
+    discountRate,
+    docType,
+    parentInvoiceId: window.__editingInvoice.parentInvoiceId || null,
+    acompteRate: parseNumber(window.__editingInvoice.acompteRate || 0)
   };
   setLoading(true, "Enregistrement...");
   const token = getAuthTokenOrLogin();
@@ -3384,6 +3587,220 @@ window.convertQuoteToInvoice = function(quoteId){
       setLoading(false);
     })
     .convertQuoteToInvoice(token, quoteId);
+};
+
+// ==========================================
+// FACTURE PROFORMA
+// ==========================================
+
+// Crée une proforma à partir d'un devis. Le devis n'est PAS marqué converti :
+// la proforma est un document commercial, pas une conversion comptable.
+window.createProformaFromQuote = function(quoteId){
+  if (!confirm("Créer une facture proforma à partir de ce devis ?")) return;
+  setLoading(true, "Création de la proforma...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res){
+      loadAllData(function(){ renderAll(); showPage("invoices"); });
+      setLoading(false);
+      if (res && res.number) alert("Facture proforma " + res.number + " créée.");
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur création proforma: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .createProformaFromQuote(token, quoteId);
+};
+
+// Transforme une proforma en facture définitive (nouveau numéro FA-...).
+window.convertProformaToInvoice = function(proformaId){
+  if (!confirm("Convertir cette proforma en facture définitive ?")) return;
+  setLoading(true, "Conversion...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res){
+      loadAllData(function(){ renderAll(); showPage("invoices"); });
+      setLoading(false);
+      if (res && res.number) alert("Facture " + res.number + " créée depuis la proforma.");
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur conversion: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .convertProformaToInvoice(token, proformaId);
+};
+
+// ==========================================
+// FACTURE D'ACOMPTE
+// ==========================================
+
+// sourceType : "quote" (devis) | "invoice" (facture ou proforma)
+window.openAcompteModal = function(sourceType, sourceId){
+  const isQuote = String(sourceType) === "quote";
+  const source = isQuote
+    ? quotes.find(q => q.id === sourceId)
+    : invoices.find(i => i.id === sourceId);
+  if (!source) return alert("Document source introuvable.");
+  if (!isQuote && invoiceDocType(source) === "acompte") {
+    return alert("Impossible de créer un acompte sur une facture d'acompte.");
+  }
+  const total = getDocTotal(source);
+  if (total <= 0) return alert("Le document source n'a pas de montant : ajoutez des articles d'abord.");
+  const already = acompteInvoicedFor(sourceId);
+  const restant = Math.max(0, total - already);
+  const srcLabel = isQuote
+    ? "Devis " + (source.number || source.id)
+    : (DOC_TYPE_META[invoiceDocType(source)] || DOC_TYPE_META.invoice).label + " " + (source.number || source.id);
+
+  window.__acompteCtx = {
+    sourceType: isQuote ? "quote" : "invoice",
+    sourceId: String(sourceId),
+    total,
+    already,
+    restant
+  };
+
+  const html = `
+    <div class="modal-overlay" onclick="closeModal()">
+      <div class="modal" onclick="event.stopPropagation()">
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-xl font-bold">Facture d'acompte</h3>
+          <button class="btn btn-secondary" type="button" onclick="closeModal()"><i class="fas fa-times"></i></button>
+        </div>
+        <form onsubmit="event.preventDefault(); submitAcompteForm()">
+          <div class="card mb-4" style="background: var(--bg-soft, #f8fafc);">
+            <div class="text-sm"><strong>${escapeHtml(srcLabel)}</strong> — ${escapeHtml(getClientName(source.clientId))}</div>
+            <div class="text-sm mt-1">Total du document : <strong>${formatAr(total)}</strong></div>
+            ${already > 0 ? `<div class="text-sm" style="color: var(--text-muted);">Acomptes déjà facturés : ${formatAr(already)} · reste facturable : <strong>${formatAr(restant)}</strong></div>` : ""}
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label class="text-sm">Calcul</label>
+              <select id="ac_mode" class="input" onchange="updateAcomptePreview()">
+                <option value="percent">Pourcentage du total</option>
+                <option value="amount">Montant fixe (Ar)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm">Valeur (<span id="ac_unit">%</span>)</label>
+              <input id="ac_value" type="number" step="0.01" min="0" class="input" value="40" oninput="updateAcomptePreview()">
+              <div class="flex gap-2 mt-2">
+                <button type="button" class="btn btn-secondary" onclick="setAcompteQuick(30)">30%</button>
+                <button type="button" class="btn btn-secondary" onclick="setAcompteQuick(40)">40%</button>
+                <button type="button" class="btn btn-secondary" onclick="setAcompteQuick(50)">50%</button>
+              </div>
+            </div>
+            <div>
+              <label class="text-sm">Date</label>
+              <input id="ac_date" type="date" class="input" value="${todayISO()}">
+            </div>
+            <div>
+              <label class="text-sm">Statut</label>
+              <select id="ac_status" class="input">
+                <option value="pending">En attente</option>
+                <option value="paid">Payée</option>
+              </select>
+            </div>
+          </div>
+          <label class="flex items-center gap-2 mt-4 text-sm">
+            <input id="ac_apply" type="checkbox" checked>
+            Déduire ce montant du reste à payer du document source
+          </label>
+          <div id="ac_preview" class="mt-4"></div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button class="btn btn-secondary" type="button" onclick="closeModal()">Annuler</button>
+            <button class="btn btn-primary" type="submit">Créer la facture d'acompte</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  openModal(html);
+  updateAcomptePreview();
+};
+
+window.setAcompteQuick = function(percent){
+  const mode = document.getElementById("ac_mode");
+  const value = document.getElementById("ac_value");
+  if (mode) mode.value = "percent";
+  if (value) value.value = percent;
+  updateAcomptePreview();
+};
+
+// Montant de l'acompte tel que le backend le calculera.
+function computeAcompteAmount(){
+  const ctx = window.__acompteCtx || {};
+  const mode = document.getElementById("ac_mode")?.value === "amount" ? "amount" : "percent";
+  const value = parseNumber(document.getElementById("ac_value")?.value || 0);
+  const total = parseNumber(ctx.total || 0);
+  const amount = mode === "amount" ? Math.round(value) : Math.round(total * value / 100);
+  const rate = total > 0 ? Math.round((amount / total) * 10000) / 100 : 0;
+  return { mode, value, amount, rate, total };
+}
+
+window.updateAcomptePreview = function(){
+  const ctx = window.__acompteCtx || {};
+  const unit = document.getElementById("ac_unit");
+  const box = document.getElementById("ac_preview");
+  if (!box) return;
+  const { mode, amount, rate, total } = computeAcompteAmount();
+  if (unit) unit.textContent = mode === "amount" ? "Ar" : "%";
+  const cumul = parseNumber(ctx.already || 0) + amount;
+  const over = cumul > total + 1;
+  const solde = Math.max(0, total - cumul);
+  box.innerHTML = `
+    <div class="card" style="${over ? "border-color: var(--danger);" : ""}">
+      <div class="flex justify-between text-sm"><span>Acompte à facturer</span><strong>${formatAr(amount)}${rate ? " (" + rate + "%)" : ""}</strong></div>
+      <div class="flex justify-between text-sm mt-1"><span>Solde restant après acompte</span><strong>${formatAr(solde)}</strong></div>
+      ${over ? `<div class="text-sm mt-2" style="color: var(--danger);">Le cumul des acomptes (${formatAr(cumul)}) dépasse le total du document (${formatAr(total)}).</div>` : ""}
+    </div>
+  `;
+};
+
+window.submitAcompteForm = function(){
+  const ctx = window.__acompteCtx;
+  if (!ctx) return;
+  const { mode, value, amount } = computeAcompteAmount();
+  if (value <= 0 || amount <= 0) return alert("Saisissez un pourcentage ou un montant supérieur à 0.");
+  if (parseNumber(ctx.already || 0) + amount > parseNumber(ctx.total || 0) + 1) {
+    return alert("Le cumul des acomptes dépasse le total du document.");
+  }
+  const params = {
+    sourceType: ctx.sourceType,
+    sourceId: ctx.sourceId,
+    mode,
+    value,
+    date: document.getElementById("ac_date")?.value || todayISO(),
+    status: document.getElementById("ac_status")?.value || "pending",
+    applyToSource: !!document.getElementById("ac_apply")?.checked
+  };
+  setLoading(true, "Création de la facture d'acompte...");
+  const token = getAuthTokenOrLogin();
+  if (!token) {
+    setLoading(false);
+    return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res){
+      closeModal();
+      loadAllData(function(){ renderAll(); showPage("invoices"); });
+      setLoading(false);
+      const num = res && res.invoice ? (res.invoice.number || "") : "";
+      if (num) alert("Facture d'acompte " + num + " créée : " + formatAr(res.amount) + " (" + res.rate + "%).");
+    })
+    .withFailureHandler(function(err){
+      alert("Erreur facture d'acompte: " + (err && err.message ? err.message : err));
+      setLoading(false);
+    })
+    .createAcompteInvoice(token, params);
 };
 
 window.convertQuoteToDelivery = function(){

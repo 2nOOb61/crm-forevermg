@@ -1792,7 +1792,7 @@ function writeQuotes_(quotes) {
 }
 
 function writeInvoices_(invoices) {
-  var headers = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate'];
+  var headers = INVOICE_HEADERS.slice();
   var rows = (invoices || []).map(function(inv){
     return [
       inv.id || '',
@@ -1805,7 +1805,10 @@ function writeInvoices_(invoices) {
       inv.notes || '',
       JSON.stringify(inv.totals || {}),
       inv.acompte || 0,
-      inv.discountRate || 0
+      inv.discountRate || 0,
+      normalizeDocType_(inv.docType),
+      inv.parentInvoiceId || '',
+      toNumber(inv.acompteRate || 0)
     ];
   });
   writeSheet_('Invoices', headers, rows);
@@ -2000,23 +2003,75 @@ function getQuotesInternal() {
   return list;
 }
 
+// ============================================================
+//  TYPES DE DOCUMENT DE FACTURATION (colonne DocType de 'Invoices')
+//   - invoice  (FA-)  : facture definitive. SEULE comptee dans les stats.
+//   - proforma (PRO-) : document commercial, non comptable.
+//   - acompte  (AC-)  : facture d'acompte rattachee a un devis / une facture.
+//  Les trois partagent la meme feuille, les memes modales et la meme
+//  impression : seules la numerotation et les mentions changent.
+// ============================================================
+var INVOICE_HEADERS = ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate', 'DocType', 'ParentInvoiceID', 'AcompteRate'];
+
+function normalizeDocType_(docType) {
+  var t = String(docType || '').toLowerCase().trim();
+  if (t === 'proforma' || t === 'acompte') return t;
+  return 'invoice';
+}
+
+function invoiceNumberPrefix_(docType) {
+  var t = normalizeDocType_(docType);
+  if (t === 'proforma') return 'PRO';
+  if (t === 'acompte') return 'AC';
+  return 'FA';
+}
+
+// Ajoute les colonnes manquantes (DocType, ParentInvoiceID, AcompteRate)
+// aux classeurs existants, sans toucher aux donnees deja presentes.
+function ensureInvoiceHeaders(sheet) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    sheet.appendRow(INVOICE_HEADERS);
+    return INVOICE_HEADERS.slice();
+  }
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  var changed = false;
+  for (var i = 0; i < INVOICE_HEADERS.length; i++) {
+    if (headers.indexOf(INVOICE_HEADERS[i]) === -1) {
+      headers.push(INVOICE_HEADERS[i]);
+      changed = true;
+    }
+  }
+  if (changed) sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  return headers;
+}
+
+function getInvoiceSheet_() {
+  return getOrCreateSheet('Invoices', INVOICE_HEADERS);
+}
+
 function getInvoicesInternal() {
-  var sheet = getOrCreateSheet('Invoices', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate']);
+  var sheet = getInvoiceSheet_();
+  var headers = ensureInvoiceHeaders(sheet);
+  var map = headerMap(headers);
   var data = sheet.getDataRange().getValues();
   var list = [];
   for (var i = 1; i < data.length; i++) {
     list.push({
-      id: data[i][0],
-      number: data[i][1],
-      clientId: data[i][2],
-      date: data[i][3],
-      status: data[i][4],
-      sourceQuoteId: data[i][5],
-      items: safeJsonParse(data[i][6], []),
-      notes: data[i][7],
-      totals: safeJsonParse(data[i][8], {}),
-      acompte: data[i][9],
-      discountRate: data[i][10]
+      id: data[i][map.ID],
+      number: data[i][map.Number],
+      clientId: data[i][map.ClientID],
+      date: data[i][map.Date],
+      status: data[i][map.Status],
+      sourceQuoteId: data[i][map.SourceQuoteID],
+      items: safeJsonParse(data[i][map.Items], []),
+      notes: data[i][map.Notes],
+      totals: safeJsonParse(data[i][map.Totals], {}),
+      acompte: data[i][map.Acompte],
+      discountRate: data[i][map.DiscountRate],
+      docType: normalizeDocType_(data[i][map.DocType]),
+      parentInvoiceId: data[i][map.ParentInvoiceID] || '',
+      acompteRate: toNumber(data[i][map.AcompteRate] || 0)
     });
   }
   return list;
@@ -2140,26 +2195,48 @@ function saveQuoteInternal(quote) {
 }
 
 function saveInvoiceInternal(invoice) {
-  var sheet = getOrCreateSheet('Invoices', ['ID', 'Number', 'ClientID', 'Date', 'Status', 'SourceQuoteID', 'Items', 'Notes', 'Totals', 'Acompte', 'DiscountRate']);
-  if (!invoice.id) invoice.id = 'INV-' + Utilities.getUuid().slice(0, 8).toUpperCase();
-  if (!invoice.number) invoice.number = generateNextNumber(sheet, 'FA');
+  var sheet = getInvoiceSheet_();
+  var headers = ensureInvoiceHeaders(sheet);
+  var map = headerMap(headers);
+  invoice.docType = normalizeDocType_(invoice.docType);
+  if (!invoice.id) {
+    var idPrefix = invoice.docType === 'proforma' ? 'PRO-' : (invoice.docType === 'acompte' ? 'ACP-' : 'INV-');
+    invoice.id = idPrefix + Utilities.getUuid().slice(0, 8).toUpperCase();
+  }
+  if (!invoice.number) invoice.number = generateNextNumber(sheet, invoiceNumberPrefix_(invoice.docType));
   invoice.discountRate = toNumber(invoice.discountRate || 0);
   invoice.totals = computeTotalsServer(invoice.items || [], invoice.discountRate);
   var data = sheet.getDataRange().getValues();
   var rowIndex = -1;
   for (var i = 1; i < data.length; i++) {
-    if (data[i][0] === invoice.id) {
+    if (data[i][map.ID] === invoice.id) {
       rowIndex = i + 1;
       break;
     }
   }
-  var row = [
-    invoice.id, invoice.number, invoice.clientId, invoice.date, invoice.status, invoice.sourceQuoteId || '',
-    JSON.stringify(invoice.items || []), invoice.notes, JSON.stringify(invoice.totals || {}),
-    invoice.acompte || 0, invoice.discountRate || 0
-  ];
+  var row = new Array(headers.length);
+  for (var c = 0; c < row.length; c++) row[c] = '';
+  row[map.ID] = invoice.id;
+  row[map.Number] = invoice.number;
+  row[map.ClientID] = invoice.clientId;
+  row[map.Date] = invoice.date;
+  row[map.Status] = invoice.status;
+  row[map.SourceQuoteID] = invoice.sourceQuoteId || '';
+  row[map.Items] = JSON.stringify(invoice.items || []);
+  row[map.Notes] = invoice.notes || '';
+  row[map.Totals] = JSON.stringify(invoice.totals || {});
+  row[map.Acompte] = invoice.acompte || 0;
+  row[map.DiscountRate] = invoice.discountRate || 0;
+  row[map.DocType] = invoice.docType;
+  row[map.ParentInvoiceID] = invoice.parentInvoiceId || '';
+  row[map.AcompteRate] = toNumber(invoice.acompteRate || 0);
   if (rowIndex > 0) {
-    sheet.getRange(rowIndex, 1, 1, row.length).setValues([row]);
+    // Preserve les colonnes hors schema (ex. Commercial) deja renseignees
+    var existing = data[rowIndex - 1];
+    for (var k = 0; k < headers.length; k++) {
+      if (INVOICE_HEADERS.indexOf(headers[k]) === -1) row[k] = existing[k];
+    }
+    sheet.getRange(rowIndex, 1, 1, headers.length).setValues([row]);
   } else {
     sheet.appendRow(row);
   }
@@ -2294,12 +2371,188 @@ function convertQuoteToInvoice(token, quoteId) {
     acompte: quote.acompte,
     discountRate: quote.discountRate
   };
+  invoice.docType = 'invoice';
   invoice = saveInvoiceInternal(invoice);
   quote.status = 'converted';
   quote.convertedTo = quote.convertedTo || {};
   quote.convertedTo.invoiceId = invoice.id;
   saveQuoteInternal(quote);
+  // Rattache a la facture les factures d'acompte emises sur ce devis
+  try {
+    getInvoicesInternal().forEach(function(doc) {
+      if (normalizeDocType_(doc.docType) === 'acompte'
+          && String(doc.sourceQuoteId || '') === quoteId
+          && !String(doc.parentInvoiceId || '')) {
+        doc.parentInvoiceId = invoice.id;
+        saveInvoiceInternal(doc);
+      }
+    });
+  } catch (e) {}
   return invoice;
+}
+
+// ============================================================
+//  FACTURE PROFORMA & FACTURE D'ACOMPTE
+// ============================================================
+
+function factTodayIso_() {
+  return Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd');
+}
+
+// Total deja facture en acompte pour un devis / une facture.
+function acompteInvoicedFor_(sourceId) {
+  var id = String(sourceId || '');
+  if (!id) return 0;
+  var total = 0;
+  getInvoicesInternal().forEach(function(doc) {
+    if (normalizeDocType_(doc.docType) !== 'acompte') return;
+    if (String(doc.sourceQuoteId || '') !== id && String(doc.parentInvoiceId || '') !== id) return;
+    total += toNumber((doc.totals && doc.totals.totalTTC) || 0);
+  });
+  return total;
+}
+
+// Proforma a partir d'un devis : le devis n'est PAS marque converti
+// (la proforma est un document commercial, pas une conversion comptable).
+function createProformaFromQuote(token, quoteId) {
+  var user = requireAuth(token);
+  assertCan_(user.role, 'invoices.write');
+  var quote = getQuotesInternal().find(function(q) { return q.id === quoteId; });
+  if (!quote) throw 'Devis introuvable.';
+  var proforma = saveInvoiceInternal({
+    id: null,
+    number: null,
+    clientId: quote.clientId,
+    date: factTodayIso_(),
+    status: 'pending',
+    sourceQuoteId: quoteId,
+    items: quote.items || [],
+    notes: quote.notes || '',
+    acompte: toNumber(quote.acompte || 0),
+    discountRate: toNumber(quote.discountRate || 0),
+    docType: 'proforma'
+  });
+  try { setDocCommercialIfEmpty_('Invoices', proforma.id, commercialName_(user)); } catch (e) {}
+  return proforma;
+}
+
+// Transforme une proforma en facture definitive (nouveau numero FA-...).
+function convertProformaToInvoice(token, proformaId) {
+  var user = requireAuth(token);
+  assertCan_(user.role, 'invoices.write');
+  var all = getInvoicesInternal();
+  var pro = all.find(function(i) { return i.id === proformaId; });
+  if (!pro) throw 'Proforma introuvable.';
+  if (normalizeDocType_(pro.docType) !== 'proforma') throw 'Ce document n\'est pas une facture proforma.';
+  var already = all.find(function(i) {
+    return normalizeDocType_(i.docType) === 'invoice' && String(i.parentInvoiceId || '') === proformaId;
+  });
+  if (already) throw 'Cette proforma est deja convertie (facture ' + (already.number || already.id) + ').';
+  var invoice = saveInvoiceInternal({
+    id: null,
+    number: null,
+    clientId: pro.clientId,
+    date: factTodayIso_(),
+    status: 'pending',
+    sourceQuoteId: pro.sourceQuoteId || '',
+    parentInvoiceId: proformaId,
+    items: pro.items || [],
+    notes: pro.notes || '',
+    acompte: toNumber(pro.acompte || 0),
+    discountRate: toNumber(pro.discountRate || 0),
+    docType: 'invoice'
+  });
+  pro.status = 'converted';
+  saveInvoiceInternal(pro);
+  try { setDocCommercialIfEmpty_('Invoices', invoice.id, commercialName_(user)); } catch (e) {}
+  return invoice;
+}
+
+// Facture d'acompte depuis un devis ou une facture.
+// params : { sourceType:'quote'|'invoice', sourceId, mode:'percent'|'amount',
+//            value, date, status, applyToSource, label }
+// Le document d'acompte porte UNE ligne (le montant de l'acompte) ; si
+// applyToSource n'est pas false, le montant est ajoute a l'Acompte du
+// document source, donc deduit de son reste a payer.
+function createAcompteInvoice(token, params) {
+  var user = requireAuth(token);
+  assertCan_(user.role, 'invoices.write');
+  params = params || {};
+  var sourceType = String(params.sourceType || 'quote').toLowerCase() === 'invoice' ? 'invoice' : 'quote';
+  var sourceId = String(params.sourceId || '');
+  if (!sourceId) throw 'Document source requis.';
+
+  var source, sourceLabel;
+  if (sourceType === 'quote') {
+    source = getQuotesInternal().find(function(q) { return q.id === sourceId; });
+    if (!source) throw 'Devis introuvable.';
+    sourceLabel = 'devis';
+  } else {
+    source = getInvoicesInternal().find(function(i) { return i.id === sourceId; });
+    if (!source) throw 'Facture introuvable.';
+    var st = normalizeDocType_(source.docType);
+    if (st === 'acompte') throw 'Impossible de creer un acompte sur une facture d\'acompte.';
+    sourceLabel = st === 'proforma' ? 'proforma' : 'facture';
+  }
+
+  var sourceTotal = toNumber((source.totals && source.totals.totalTTC) || 0);
+  if (sourceTotal <= 0) sourceTotal = toNumber((computeTotalsServer(source.items || [], source.discountRate || 0) || {}).totalTTC || 0);
+  if (sourceTotal <= 0) throw 'Le document source n\'a pas de montant.';
+
+  var mode = String(params.mode || 'percent').toLowerCase() === 'amount' ? 'amount' : 'percent';
+  var rate, amount;
+  if (mode === 'amount') {
+    amount = Math.round(toNumber(params.value || 0));
+    rate = Math.round((amount / sourceTotal) * 10000) / 100;
+  } else {
+    rate = toNumber(params.value || 0);
+    if (rate <= 0 || rate > 100) throw 'Le pourcentage d\'acompte doit etre entre 0 et 100.';
+    amount = Math.round(sourceTotal * rate / 100);
+  }
+  if (amount <= 0) throw 'Le montant de l\'acompte doit etre superieur a 0.';
+
+  var already = acompteInvoicedFor_(sourceId);
+  if (already + amount > sourceTotal + 1) {
+    throw 'Acomptes deja factures : ' + already + ' Ar sur ' + sourceTotal + ' Ar. Le cumul depasserait le total du document.';
+  }
+
+  var sourceNumber = source.number || sourceId;
+  var label = String(params.label || '').trim()
+    || ('Acompte ' + rate + '% sur ' + sourceLabel + ' ' + sourceNumber + ' (total ' + sourceTotal + ' Ar)');
+
+  var acompteDoc = saveInvoiceInternal({
+    id: null,
+    number: null,
+    clientId: source.clientId,
+    date: params.date || factTodayIso_(),
+    status: String(params.status || 'pending'),
+    sourceQuoteId: sourceType === 'quote' ? sourceId : (source.sourceQuoteId || ''),
+    parentInvoiceId: sourceType === 'invoice' ? sourceId : '',
+    items: [{ description: label, qty: 1, unitPrice: amount }],
+    notes: 'Acompte sur ' + sourceLabel + ' ' + sourceNumber + '. Total du document : ' + sourceTotal + ' Ar.',
+    acompte: 0,
+    discountRate: 0,
+    docType: 'acompte',
+    acompteRate: rate
+  });
+  try { setDocCommercialIfEmpty_('Invoices', acompteDoc.id, commercialName_(user)); } catch (e) {}
+
+  var applied = false;
+  if (params.applyToSource !== false) {
+    source.acompte = toNumber(source.acompte || 0) + amount;
+    if (sourceType === 'quote') saveQuoteInternal(source);
+    else saveInvoiceInternal(source);
+    applied = true;
+  }
+
+  return {
+    ok: true,
+    invoice: acompteDoc,
+    amount: amount,
+    rate: rate,
+    sourceTotal: sourceTotal,
+    appliedToSource: applied
+  };
 }
 
 function convertQuoteToDelivery(token, quoteId) {
@@ -2314,6 +2567,9 @@ function convertInvoiceToDelivery(token, invoiceId) {
   var invoices = getInvoicesInternal();
   var invoice = invoices.find(function(i) { return i.id === invoiceId; });
   if (!invoice) throw 'Facture introuvable.';
+  var invType = normalizeDocType_(invoice.docType);
+  if (invType === 'proforma') throw 'Convertissez d\'abord la proforma en facture definitive.';
+  if (invType === 'acompte') throw 'Un bon de livraison ne se cree pas depuis une facture d\'acompte.';
   var delivery = {
     id: null,
     number: null,
@@ -2738,6 +2994,9 @@ function getCommercialStats(token) {
   try {
     var iCom = docCommercialMap_("Invoices");
     getInvoicesInternal().forEach(function(inv) {
+      // Proformas (non comptables) et factures d'acompte (deja refletees dans
+      // l'Acompte de la facture definitive) sont exclues des agregats.
+      if (normalizeDocType_(inv.docType) !== 'invoice') return;
       var s = ensure(iCom[inv.id]);
       var ttc = Number((inv.totals && inv.totals.totalTTC) || 0);
       var ac  = Number(inv.acompte || 0);
